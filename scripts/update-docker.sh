@@ -38,20 +38,22 @@ if ! git reset --hard FETCH_HEAD 2>&1; then
 fi
 echo "[ok] code $(head -1 VERSION 2>/dev/null || echo ?)"
 
-if command -v docker >/dev/null 2>&1; then
-  if docker compose version >/dev/null 2>&1; then
-    DC="docker compose"
-  elif command -v docker-compose >/dev/null 2>&1; then
-    DC="docker-compose"
-  else
-    fail "未找到 docker compose 命令"
-  fi
-else
-  fail "容器内未安装 docker 命令"
+export DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"
+
+DC=""
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  DC="docker compose"
+elif [[ -x /usr/local/bin/docker-compose ]] && /usr/local/bin/docker-compose version >/dev/null 2>&1; then
+  DC="/usr/local/bin/docker-compose"
+elif command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
+  DC="docker-compose"
+fi
+if [[ -z "$DC" ]]; then
+  fail "未找到 docker compose（需重建镜像或挂载 docker.sock）"
 fi
 
 echo "[ok] using $DC"
-if ! $DC -f "$DIR/docker-compose.yml" up -d --build 2>&1; then
+if ! $DC -f "$DIR/docker-compose.yml" up -d --build; then
   fail "docker compose up 失败"
 fi
 
