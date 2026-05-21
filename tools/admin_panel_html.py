@@ -341,7 +341,7 @@ ADMIN_HTML = r"""
       opacity: 0;
       pointer-events: none;
       transition: opacity 0.2s ease, transform 0.2s ease;
-      z-index: 9999;
+      z-index: 10200;
     }
     .toast.show {
       opacity: 1;
