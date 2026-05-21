@@ -18,7 +18,8 @@ services:
     volumes:
       - ./data:/app/data
       - ./VERSION:/app/VERSION:ro
-      - ./core/app_version.py:/app/core/app_version.py:ro
+      - ./core:/app/core:ro
+      - ./tools:/app/tools:ro
       - .:/host-codex
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:

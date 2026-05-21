@@ -186,21 +186,45 @@ def _fetch_remote_version_file(repo: str) -> dict[str, Any] | None:
     return None
 
 
+def _pick_newest_remote(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    best: dict[str, Any] | None = None
+    for item in candidates:
+        tag = item.get("tag")
+        if not tag:
+            continue
+        if best is None or compare_versions(str(best["tag"]), str(tag)) < 0:
+            best = item
+    return best
+
+
 def fetch_remote_release() -> dict[str, Any]:
+    """Remote version = max(main/VERSION, latest Release, all tags).
+
+    Older logic preferred releases/latest first, so a stale Release (e.g. v1.0.11)
+    hid a newer VERSION on main (e.g. 1.0.13) when you only sync via git push.
+    """
     repo = get_github_repo()
+    candidates: list[dict[str, Any]] = []
+
+    raw = _fetch_remote_version_file(repo)
+    if raw:
+        candidates.append(raw)
+
     latest = _fetch_github_json(f"https://api.github.com/repos/{repo}/releases/latest")
     if latest and latest.get("tag_name"):
         tag = str(latest["tag_name"]).lstrip("vV")
-        return {
-            "available": True,
-            "source": "release",
-            "repo": repo,
-            "tag": tag,
-            "name": str(latest.get("name") or tag),
-            "publishedAt": latest.get("published_at"),
-            "htmlUrl": latest.get("html_url") or f"https://github.com/{repo}/releases/latest",
-            "body": str(latest.get("body") or "").strip(),
-        }
+        candidates.append(
+            {
+                "available": True,
+                "source": "release",
+                "repo": repo,
+                "tag": tag,
+                "name": str(latest.get("name") or tag),
+                "publishedAt": latest.get("published_at"),
+                "htmlUrl": latest.get("html_url") or f"https://github.com/{repo}/releases/latest",
+                "body": str(latest.get("body") or "").strip(),
+            }
+        )
 
     tags_body = _fetch_url_text(
         f"https://api.github.com/repos/{repo}/tags",
@@ -211,23 +235,22 @@ def fetch_remote_release() -> dict[str, Any]:
             tags = json.loads(tags_body)
         except json.JSONDecodeError:
             tags = None
-        if isinstance(tags, list) and tags:
-            tag = str(tags[0].get("name") or "").lstrip("vV")
-            if tag:
-                return {
-                    "available": True,
-                    "source": "tag",
-                    "repo": repo,
-                    "tag": tag,
-                    "name": tag,
-                    "publishedAt": None,
-                    "htmlUrl": f"https://github.com/{repo}/releases",
-                    "body": "",
-                }
+        if isinstance(tags, list):
+            for item in tags:
+                tag = str(item.get("name") or "").lstrip("vV")
+                if tag:
+                    candidates.append(
+                        _remote_version_payload(
+                            repo,
+                            tag,
+                            source="tag",
+                            html_url=f"https://github.com/{repo}/releases/tag/v{tag}",
+                        )
+                    )
 
-    raw = _fetch_remote_version_file(repo)
-    if raw:
-        return raw
+    best = _pick_newest_remote(candidates)
+    if best:
+        return best
 
     return {
         "available": False,
@@ -238,7 +261,7 @@ def fetch_remote_release() -> dict[str, Any]:
         "publishedAt": None,
         "htmlUrl": f"https://github.com/{repo}",
         "body": "",
-        "error": "无法连接 GitHub API；请确认服务器能访问 github.com，或已发布 Release",
+        "error": "无法连接 GitHub API；请确认服务器能访问 github.com，或 main 分支存在 VERSION 文件",
     }
 
 

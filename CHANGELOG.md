@@ -2,6 +2,13 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.14] - 2026-05-22
+
+### 修复
+
+- GitHub「最新版本」改为取 **main/VERSION、Release、标签** 三者中的最高版本；避免旧 Release（如 v1.0.11）盖住 main 上已推到 1.0.13 的 VERSION。
+- `docker-compose.yml` 挂载整个 `core/`、`tools/`，宿主机 `git pull` 后重启容器即可生效，不必每次重建镜像。
+
 ## [1.0.9] - 2026-05-22
 
 ### 修复
