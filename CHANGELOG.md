@@ -2,6 +2,12 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.7] - 2026-05-22
+
+### 说明
+
+- 测试 GitHub 版本检测与 Docker 更新脚本 `update-docker.sh`。
+
 ## [1.0.6] - 2026-05-22
 
 ### 修复
