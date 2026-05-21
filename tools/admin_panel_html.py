@@ -262,6 +262,11 @@ ADMIN_HTML = r"""
     .about-section h4 { margin: 0 0 10px; font-size: 16px; }
     .about-section p, .about-section li { margin: 0; color: #4b5875; line-height: 1.7; font-size: 14px; }
     .about-section ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+    .about-version-line { margin: 0 0 10px; font-size: 14px; color: #172033; }
+    .about-version-line strong { color: var(--blue); }
+    .about-changelog { margin: 0; padding-left: 18px; display: grid; gap: 8px; }
+    .about-changelog li { color: #4b5875; line-height: 1.65; font-size: 14px; }
+    .about-changelog .ver { font-weight: 600; color: #172033; }
     table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
     th, td { padding: 10px 8px; border-bottom: 1px solid rgba(228,234,246,0.9); text-align: left; vertical-align: middle; }
     th { color: var(--muted); }
@@ -1127,6 +1132,18 @@ ADMIN_HTML = r"""
           <div class="sub">Codex凭证管理（Codex Credential Console）— 卡密分发与账号池，面向 ChatGPT / Codex 账号的导入、检测、取号与 Session 导出。</div>
 
           <div class="about-section">
+            <h4>版本与更新</h4>
+            <p class="about-version-line">当前版本：<strong id="about-app-version">加载中…</strong>　右上角「v」按钮可检查 GitHub 更新并一键拉取部署。</p>
+            <ul class="about-changelog" id="about-changelog">
+              <li><span class="ver">v1.0.17</span> — 关于页增加「版本与更新」说明；版本弹窗界面精简。</li>
+              <li><span class="ver">v1.0.16</span> — 版本号与更新说明整理。</li>
+              <li><span class="ver">v1.0.15</span> — 版本弹窗去掉图标、副标题「仅点击检查更新才访问 GitHub」、数据库路径行。</li>
+              <li><span class="ver">v1.0.14</span> — GitHub 最新版取 main/VERSION、Release、标签三者最高版本；Docker 挂载 core/tools 便于热更新。</li>
+              <li><span class="ver">v1.0.8</span> — 一键更新（Docker git + 重建）、检查更新才访问 GitHub、Toast 置于弹窗之上。</li>
+            </ul>
+          </div>
+
+          <div class="about-section">
             <h4>系统能做什么</h4>
             <ul>
               <li><strong>双池管理：</strong>PP 池（Codex-P）与 GO 池（Codex-G）账号、卡密独立统计与分发。</li>
@@ -1176,9 +1193,9 @@ ADMIN_HTML = r"""
 
           <div class="about-section">
             <h4>部署与重启</h4>
-            <p>启动命令：<span class="mono">python tools/session_converter_web.py --host 127.0.0.1 --port 8766</span></p>
-            <p>后台地址：<span class="mono">/admin</span>　前台地址：<span class="mono">/</span></p>
-            <p>修改代码后请运行 <span class="mono">tools/restart_admin.ps1</span> 并浏览器 Ctrl+F5 强刷。</p>
+            <p>推荐 Docker：<span class="mono">docker compose up -d</span>；日常更新可在右上角版本弹窗点「检查更新」→「一键更新」。</p>
+            <p>本机开发：<span class="mono">python tools/session_converter_web.py --host 127.0.0.1 --port 8766</span></p>
+            <p>后台地址：<span class="mono">/admin</span>　前台地址：<span class="mono">/</span>　修改界面后请 Ctrl+F5 强刷。</p>
           </div>
         </section>
       </div>
@@ -1530,6 +1547,7 @@ ADMIN_HTML = r"""
       }
       if (activeTab === "about") {
         loadSettings().catch(() => {});
+        loadAboutVersion().catch(() => {});
       }
     }
 
@@ -2641,6 +2659,19 @@ ADMIN_HTML = r"""
       const showDot = highlightUpdate && !!info.updateAvailable;
       btn.classList.toggle("has-update", showDot);
       btn.title = showDot ? "有新版本，点击查看" : "点击查看版本（不自动检测 GitHub）";
+    }
+
+    async function loadAboutVersion() {
+      const node = $("about-app-version");
+      if (!node) return;
+      try {
+        const res = await adminFetch("/api/admin/version");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "加载失败");
+        node.textContent = `v${data.version || "?"}`;
+      } catch {
+        node.textContent = "未知";
+      }
     }
 
     async function loadVersionBadge() {
