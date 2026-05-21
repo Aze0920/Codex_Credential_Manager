@@ -49,6 +49,53 @@ def get_github_repo() -> str:
     return (os.environ.get("GITHUB_REPO") or DEFAULT_GITHUB_REPO).strip().strip("/")
 
 
+def get_update_script_path() -> str:
+    override = (os.environ.get("UPDATE_SCRIPT") or "").strip()
+    if override:
+        return override
+    for candidate in (
+        PROJECT_ROOT / "scripts" / "update-docker.sh",
+        Path("/host-codex/scripts/update-docker.sh"),
+        PROJECT_ROOT / "scripts" / "update-server.sh",
+    ):
+        if candidate.is_file():
+            return str(candidate)
+    return str(PROJECT_ROOT / "scripts" / "update-docker.sh")
+
+
+def get_host_install_dir() -> str:
+    for candidate in (
+        (os.environ.get("HOST_INSTALL_DIR") or "").strip(),
+        "/host-codex",
+        str(PROJECT_ROOT),
+    ):
+        if candidate and Path(candidate).is_dir():
+            return candidate
+    return str(PROJECT_ROOT)
+
+
+def check_update_readiness() -> dict[str, Any]:
+    issues: list[str] = []
+    install_dir = get_host_install_dir()
+    script = Path(get_update_script_path())
+    if not (os.environ.get("ENABLE_SELF_UPDATE") or "").strip().lower() in {"1", "true", "yes"}:
+        issues.append("未设置 ENABLE_SELF_UPDATE=1")
+    if not script.is_file():
+        issues.append(f"更新脚本不存在: {script}")
+    if install_dir == str(PROJECT_ROOT) and not (PROJECT_ROOT / ".git").is_dir():
+        issues.append("未挂载宿主机项目目录（需要 .:/host-codex），请重建 Docker 容器")
+    if install_dir != str(PROJECT_ROOT) and not (Path(install_dir) / ".git").is_dir():
+        issues.append(f"宿主机目录不是 git 仓库: {install_dir}")
+    if not Path("/var/run/docker.sock").exists():
+        issues.append("未挂载 docker.sock，无法一键重建容器")
+    return {
+        "ready": len(issues) == 0,
+        "issues": issues,
+        "installDir": install_dir,
+        "updateScript": str(script),
+    }
+
+
 def _fetch_url_text(url: str, *, timeout: int = 12, accept: str | None = None) -> str | None:
     headers = {"User-Agent": "Codex-Credential-Console"}
     if accept:
@@ -201,7 +248,8 @@ def build_version_payload(*, include_remote: bool = True) -> dict[str, Any]:
         "version": current,
         "githubRepo": get_github_repo(),
         "selfUpdateEnabled": (os.environ.get("ENABLE_SELF_UPDATE") or "").strip().lower() in {"1", "true", "yes"},
-        "updateScript": (os.environ.get("UPDATE_SCRIPT") or str(PROJECT_ROOT / "scripts" / "update-server.sh")).strip(),
+        "updateScript": get_update_script_path(),
+        "updateReadiness": check_update_readiness(),
     }
     if not include_remote:
         return payload

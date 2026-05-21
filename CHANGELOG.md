@@ -2,6 +2,13 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.9] - 2026-05-22
+
+### 修复
+
+- 一键更新失败时返回明确原因（git / docker.sock / host-codex 挂载）。
+- 版本弹窗显示环境未就绪提示。
+
 ## [1.0.8] - 2026-05-22
 
 ### 变更

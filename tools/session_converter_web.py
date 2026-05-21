@@ -89,7 +89,7 @@ from core.api_gateway import (
     verify_api_gateway_key,
 )
 from core.activity_logger import clear_all_activity_logs, log_activity, log_exception, list_activity_logs
-from core.app_version import build_version_payload, get_app_version
+from core.app_version import build_version_payload, get_app_version, get_host_install_dir
 from core.db_config import create_database_backup, get_database_path, list_database_backups
 from core.proxy_tester import test_proxy_pool
 from tools.admin_panel_html import ADMIN_HTML
@@ -2581,9 +2581,14 @@ def admin_update_run():
     meta = build_version_payload(include_remote=False)
     if not meta.get("selfUpdateEnabled"):
         return jsonify({"ok": False, "error": "未启用 ENABLE_SELF_UPDATE，请在环境变量中设置"}), 403
+    readiness = meta.get("updateReadiness") or {}
+    if not readiness.get("ready"):
+        issues = readiness.get("issues") or []
+        return jsonify({"ok": False, "error": "；".join(issues) or "环境未就绪"}), 400
     script = Path(str(meta.get("updateScript") or "")).resolve()
     if not script.is_file():
         return jsonify({"ok": False, "error": f"更新脚本不存在: {script}"}), 404
+    install_dir = str(readiness.get("installDir") or get_host_install_dir())
     log_activity(
         category="admin",
         action="update.start",
@@ -2591,7 +2596,6 @@ def admin_update_run():
         status="running",
         detail={"script": str(script)},
     )
-    install_dir = (os.environ.get("HOST_INSTALL_DIR") or str(PROJECT_ROOT)).strip()
     try:
         result = subprocess.run(
             ["bash", str(script)],
@@ -2613,10 +2617,13 @@ def admin_update_run():
         status="success" if ok else "failed",
         detail={"exitCode": result.returncode},
     )
+    detail = (result.stderr or "").strip() or (result.stdout or "").strip()
+    err_msg = detail.splitlines()[-1] if detail else f"退出码 {result.returncode}"
     return jsonify(
         {
             "ok": ok,
             "exitCode": result.returncode,
+            "error": None if ok else err_msg,
             "stdout": (result.stdout or "")[-8000:],
             "stderr": (result.stderr or "")[-4000:],
         }

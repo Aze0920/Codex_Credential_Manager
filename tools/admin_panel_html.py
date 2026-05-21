@@ -2675,10 +2675,12 @@ ADMIN_HTML = r"""
       const statusText = info.updateAvailable
         ? "发现新版本"
         : (info.upToDate ? "已是最新" : "无法对比远程版本");
-      const canRunUpdate = !!(info.selfUpdateEnabled && info.updateAvailable);
+      const readiness = info.updateReadiness || {};
+      const envReady = readiness.ready !== false;
+      const canRunUpdate = !!(info.selfUpdateEnabled && info.updateAvailable && envReady);
       const updateTip = !info.selfUpdateEnabled
         ? "未启用 ENABLE_SELF_UPDATE"
-        : (info.updateAvailable ? "拉取 GitHub 并重建容器" : (info.upToDate ? "已是最新，无需更新" : "暂无法确认是否有新版本"));
+        : (!envReady ? (readiness.issues || []).join("；") : (info.updateAvailable ? "拉取 GitHub 并重建容器" : (info.upToDate ? "已是最新，无需更新" : "暂无法确认是否有新版本")));
       const updateBtnHtml = `<button class="button primary" type="button" id="version-update-btn"${canRunUpdate ? "" : " disabled"} title="${escapeHtml(updateTip)}">一键更新</button>`;
       const bodyHtml = [
         `<div class="version-row"><span>当前版本</span><strong>v${escapeHtml(info.version)}</strong></div>`,
@@ -2687,6 +2689,9 @@ ADMIN_HTML = r"""
         remote.htmlUrl ? `<p class="version-note"><a href="${escapeHtml(remote.htmlUrl)}" target="_blank" rel="noopener">查看 GitHub 发布说明</a></p>` : "",
         remote.body ? `<p class="version-note">${escapeHtml(remote.body.slice(0, 600))}${remote.body.length > 600 ? "…" : ""}</p>` : "",
         info.databasePath ? `<p class="version-note">数据库: ${escapeHtml(info.databasePath)}</p>` : "",
+        (!envReady && readiness.issues && readiness.issues.length)
+          ? `<p class="version-note" style="color:#c62828;">无法一键更新：${escapeHtml(readiness.issues.join("；"))}</p>`
+          : "",
         `<div class="controls" style="margin-top:4px;">`,
         `<button class="button" type="button" id="version-check-btn">重新检查</button>`,
         `<button class="button" type="button" id="version-backup-btn">备份数据库</button>`,
@@ -2759,7 +2764,10 @@ ADMIN_HTML = r"""
         const data = await res.json();
         const text = [data.stdout, data.stderr].filter(Boolean).join("\n").trim();
         if (logEl) logEl.textContent = text || (data.error || (data.ok ? "更新完成" : "更新失败"));
-        if (!res.ok || !data.ok) throw new Error(data.error || "更新失败");
+        if (!res.ok || !data.ok) {
+          const msg = data.error || text.split("\n").filter(Boolean).pop() || "更新失败";
+          throw new Error(msg);
+        }
         showToast("更新完成，如页面无响应请刷新", "success");
         setTimeout(() => {
           loadVersionBadge().catch(() => {});
