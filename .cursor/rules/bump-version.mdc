@@ -1,0 +1,14 @@
+---
+description: 每次改代码必须递增 VERSION 并写 CHANGELOG
+alwaysApply: true
+---
+
+# 版本号必须随改动递增
+
+在本项目（Codex Credential Manager / GPTSessionWeb_Source）中，**只要对仓库做了任何功能性或界面改动**，在结束任务前必须：
+
+1. 将根目录 `VERSION` 递增一个小版本（如 `1.0.14` → `1.0.15`），只保留一行版本号。
+2. 在 `CHANGELOG.md` 顶部新增对应 `## [x.y.z] - 日期` 条目，简要说明本次改动。
+3. 提交/推送说明可与 `sync vX.Y.Z` 风格一致；用户用 `一键上传.bat` 时会读取 `VERSION`。
+
+未改代码（纯答疑、只读排查）时不要无故 bump。用户明确要求「只改某处、不要动版本」时除外。
