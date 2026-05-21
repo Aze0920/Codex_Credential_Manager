@@ -2,10 +2,10 @@
 """应用版本与 GitHub 更新检查。"""
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -72,26 +72,70 @@ def _fetch_github_json(url: str) -> dict[str, Any] | None:
         return None
 
 
+def _version_tag_from_text(text: str) -> str | None:
+    tag = text.splitlines()[0].strip().lstrip("vV") if text else ""
+    return tag or None
+
+
+def _remote_version_payload(repo: str, tag: str, *, source: str, html_url: str) -> dict[str, Any]:
+    return {
+        "available": True,
+        "source": source,
+        "repo": repo,
+        "tag": tag,
+        "name": tag,
+        "publishedAt": None,
+        "htmlUrl": html_url,
+        "body": "",
+    }
+
+
+def _fetch_main_commit_sha(repo: str) -> str | None:
+    data = _fetch_github_json(f"https://api.github.com/repos/{repo}/commits/main")
+    if data and data.get("sha"):
+        return str(data["sha"]).strip()
+    return None
+
+
 def _fetch_remote_version_file(repo: str) -> dict[str, Any] | None:
-    """Fallback when api.github.com is blocked (e.g. some CN servers)."""
-    for branch in ("main", "master"):
-        bust = int(time.time())
-        url = f"https://raw.githubusercontent.com/{repo}/{branch}/VERSION?_{bust}"
-        text = _fetch_url_text(url)
-        if not text:
-            continue
-        tag = text.splitlines()[0].strip().lstrip("vV")
+    """Read VERSION from GitHub; use commit SHA to avoid raw CDN cache on /main/."""
+    sha = _fetch_main_commit_sha(repo)
+    if sha:
+        text = _fetch_url_text(f"https://raw.githubusercontent.com/{repo}/{sha}/VERSION")
+        tag = _version_tag_from_text(text or "")
         if tag:
-            return {
-                "available": True,
-                "source": "raw",
-                "repo": repo,
-                "tag": tag,
-                "name": tag,
-                "publishedAt": None,
-                "htmlUrl": f"https://github.com/{repo}/blob/{branch}/VERSION",
-                "body": "",
-            }
+            return _remote_version_payload(
+                repo,
+                tag,
+                source="raw-sha",
+                html_url=f"https://github.com/{repo}/blob/main/VERSION",
+            )
+
+    contents = _fetch_github_json(f"https://api.github.com/repos/{repo}/contents/VERSION?ref=main")
+    if contents and contents.get("content"):
+        try:
+            raw = base64.b64decode(str(contents["content"]).replace("\n", ""))
+            tag = _version_tag_from_text(raw.decode("utf-8", errors="replace"))
+            if tag:
+                return _remote_version_payload(
+                    repo,
+                    tag,
+                    source="api-contents",
+                    html_url=str(contents.get("html_url") or f"https://github.com/{repo}/blob/main/VERSION"),
+                )
+        except (ValueError, OSError):
+            pass
+
+    for branch in ("main", "master"):
+        text = _fetch_url_text(f"https://raw.githubusercontent.com/{repo}/{branch}/VERSION")
+        tag = _version_tag_from_text(text or "")
+        if tag:
+            return _remote_version_payload(
+                repo,
+                tag,
+                source="raw-branch",
+                html_url=f"https://github.com/{repo}/blob/{branch}/VERSION",
+            )
     return None
 
 
