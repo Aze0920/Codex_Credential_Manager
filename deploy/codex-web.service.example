@@ -1,0 +1,27 @@
+# Codex凭证管理 — systemd 示例（CentOS 7 + pyenv）
+# 安装: cp deploy/codex-web.service.example /etc/systemd/system/codex-web.service
+# 修改 WorkingDirectory、ADMIN_PASSWORD、Node 路径后:
+#   systemctl daemon-reload && systemctl enable --now codex-web
+
+[Unit]
+Description=Codex Credential Console (Codex凭证管理)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/www/wwwroot/Codex
+Environment=PYENV_ROOT=/root/.pyenv
+Environment=PATH=/root/.pyenv/shims:/root/.pyenv/bin:/www/server/nvm/versions/node/v16.20.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=ADMIN_PASSWORD=请改成强密码
+Environment=NODE_EXECUTABLE=/www/server/nvm/versions/node/v16.20.0/bin/node
+Environment=GITHUB_REPO=Aze0920/Codex_Credential_Manager
+# 启用后台一键更新时取消下行注释：
+# Environment=ENABLE_SELF_UPDATE=1
+# Environment=UPDATE_SCRIPT=/www/wwwroot/Codex/scripts/update-server.sh
+ExecStart=/root/.pyenv/shims/python tools/session_converter_web.py --host 0.0.0.0 --port 8766
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

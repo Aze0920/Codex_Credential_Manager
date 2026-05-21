@@ -1,0 +1,41 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# 数据与日志（切勿提交到公开仓库）
+data/*
+!data/.gitkeep
+data/backups/*
+*.db
+*.db-journal
+*.log
+*.err.log
+*.bak
+
+# 环境与密钥
+.env
+.env.local
+*.pem
+*.key
+
+# 系统与 IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# 构建与临时
+/tmp/
+dist/
+build/
+miniconda.sh
+pyenv-install*.log
+
+# Windows 本地生成（可用 make_restart_bat.py 重新生成）
+# restart_admin.bat 已纳入版本库，供 Windows 用户直接使用

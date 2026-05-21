@@ -1,0 +1,15 @@
+.venv
+venv
+__pycache__
+.git
+.gitignore
+data/*.db
+data/*.log
+*.md
+!README.md
+.env
+.env.local
+terminals
+agent-tools
+miniconda.sh
+pyenv-install*.log
