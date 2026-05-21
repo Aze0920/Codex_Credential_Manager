@@ -364,23 +364,36 @@ ADMIN_HTML = r"""
       align-items: center;
       justify-content: center;
       padding: 24px;
-      background: rgba(16, 24, 38, 0.48);
-      backdrop-filter: blur(6px);
       opacity: 0;
       pointer-events: none;
       transition: opacity 0.22s ease;
       z-index: 10000;
+      isolation: isolate;
     }
+    #version-modal { z-index: 10050; }
+    #confirm-modal { z-index: 10060; }
     .modal-backdrop.show {
       opacity: 1;
       pointer-events: auto;
     }
+    .modal-scrim {
+      position: absolute;
+      inset: 0;
+      background: rgba(16, 24, 38, 0.52);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      z-index: 0;
+    }
     .modal-dialog {
+      position: relative;
+      z-index: 1;
       width: min(420px, calc(100vw - 48px));
+      max-height: calc(100vh - 48px);
+      overflow: auto;
       border-radius: 22px;
       border: 1px solid rgba(152, 168, 205, 0.42);
       background: linear-gradient(180deg, #ffffff 0%, #f8faff 100%);
-      box-shadow: 0 28px 64px rgba(36, 52, 92, 0.22);
+      box-shadow: 0 28px 64px rgba(36, 52, 92, 0.28);
       padding: 24px 24px 20px;
       transform: translateY(12px) scale(0.98);
       transition: transform 0.22s ease, opacity 0.22s ease;
@@ -389,6 +402,13 @@ ADMIN_HTML = r"""
     .modal-backdrop.show .modal-dialog {
       transform: translateY(0) scale(1);
       opacity: 1;
+    }
+    .button:disabled,
+    .button.primary:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      pointer-events: none;
+      filter: grayscale(0.2);
     }
     .modal-head {
       display: flex;
@@ -1166,6 +1186,7 @@ ADMIN_HTML = r"""
   </div>
   <div id="toast" class="toast">已刷新</div>
   <div id="confirm-modal" class="modal-backdrop" aria-hidden="true">
+    <div class="modal-scrim" aria-hidden="true"></div>
     <div class="modal-dialog" id="confirm-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
       <div class="modal-head">
         <div class="modal-icon" id="confirm-modal-icon">?</div>
@@ -1181,6 +1202,7 @@ ADMIN_HTML = r"""
     </div>
   </div>
   <div id="version-modal" class="modal-backdrop" aria-hidden="true">
+    <div class="modal-scrim" aria-hidden="true"></div>
     <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="version-modal-title">
       <div class="modal-head">
         <div class="modal-icon">v</div>
@@ -2653,6 +2675,11 @@ ADMIN_HTML = r"""
       const statusText = info.updateAvailable
         ? "发现新版本"
         : (info.upToDate ? "已是最新" : "无法对比远程版本");
+      const canRunUpdate = !!(info.selfUpdateEnabled && info.updateAvailable);
+      const updateTip = !info.selfUpdateEnabled
+        ? "未启用 ENABLE_SELF_UPDATE"
+        : (info.updateAvailable ? "拉取 GitHub 并重建容器" : (info.upToDate ? "已是最新，无需更新" : "暂无法确认是否有新版本"));
+      const updateBtnHtml = `<button class="button primary" type="button" id="version-update-btn"${canRunUpdate ? "" : " disabled"} title="${escapeHtml(updateTip)}">一键更新</button>`;
       const bodyHtml = [
         `<div class="version-row"><span>当前版本</span><strong>v${escapeHtml(info.version)}</strong></div>`,
         `<div class="version-row"><span>GitHub 最新</span><strong>${escapeHtml(latest)}</strong></div>`,
@@ -2663,35 +2690,16 @@ ADMIN_HTML = r"""
         `<div class="controls" style="margin-top:4px;">`,
         `<button class="button" type="button" id="version-check-btn">重新检查</button>`,
         `<button class="button" type="button" id="version-backup-btn">备份数据库</button>`,
-        info.selfUpdateEnabled
-          ? `<button class="button primary" type="button" id="version-update-btn">一键更新</button>`
-          : `<button class="button primary" type="button" id="version-update-btn" disabled title="请设置 ENABLE_SELF_UPDATE=1">一键更新</button>`,
+        updateBtnHtml,
         `</div>`,
         `<pre class="version-log" id="version-update-log" hidden></pre>`,
       ].join("");
       $("version-modal-body").innerHTML = bodyHtml;
       $("version-check-btn")?.addEventListener("click", () => refreshVersionModal(true));
       $("version-backup-btn")?.addEventListener("click", () => runDatabaseBackup());
-      $("version-update-btn")?.addEventListener("click", () => runSelfUpdate());
-    }
-
-    async function downloadDatabaseFile() {
-      try {
-        const res = await adminFetch("/api/admin/database/download");
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || "下载失败");
-        }
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = "codex-backup.db";
-        link.click();
-        URL.revokeObjectURL(url);
-        showToast("数据库下载已开始", "success");
-      } catch (error) {
-        showToast(error.message || "下载失败", "error");
+      const updateBtn = $("version-update-btn");
+      if (updateBtn && !updateBtn.disabled) {
+        updateBtn.addEventListener("click", () => runSelfUpdate());
       }
     }
 
@@ -2728,11 +2736,19 @@ ADMIN_HTML = r"""
     }
 
     async function runSelfUpdate() {
-      if (!await showConfirm({
-        title: "一键更新",
-        message: "将拉取 GitHub 最新代码、备份数据库并重建 Docker 容器。确定继续？",
-        confirmText: "开始更新",
-      })) return;
+      if (!versionInfoCache?.updateAvailable) {
+        showToast(versionInfoCache?.upToDate ? "已是最新，无需更新" : "当前无法更新", "error");
+        return;
+      }
+      if (!versionInfoCache?.selfUpdateEnabled) {
+        showToast("未启用一键更新", "error");
+        return;
+      }
+      const updateBtn = $("version-update-btn");
+      if (updateBtn) {
+        updateBtn.disabled = true;
+        updateBtn.textContent = "更新中…";
+      }
       const logEl = $("version-update-log");
       if (logEl) {
         logEl.hidden = false;
@@ -2745,9 +2761,16 @@ ADMIN_HTML = r"""
         if (logEl) logEl.textContent = text || (data.error || (data.ok ? "更新完成" : "更新失败"));
         if (!res.ok || !data.ok) throw new Error(data.error || "更新失败");
         showToast("更新完成，如页面无响应请刷新", "success");
-        setTimeout(() => loadVersionBadge().catch(() => {}), 3000);
+        setTimeout(() => {
+          loadVersionBadge().catch(() => {});
+          refreshVersionModal(false).catch(() => {});
+        }, 3000);
       } catch (error) {
         showToast(error.message || "更新失败", "error");
+        if (updateBtn) {
+          updateBtn.disabled = false;
+          updateBtn.textContent = "一键更新";
+        }
       }
     }
 
