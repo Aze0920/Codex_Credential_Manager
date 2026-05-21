@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Docker 部署：在服务器上执行（不是容器里）
+# Docker 一键更新：在容器内调用宿主机 docker（需挂载 docker.sock 与项目目录）
 set -euo pipefail
-INSTALL_DIR="${INSTALL_DIR:-/www/wwwroot/Codex}"
-cd "$INSTALL_DIR"
+DIR="${HOST_INSTALL_DIR:-${INSTALL_DIR:-/www/wwwroot/Codex}}"
+cd "$DIR"
 
-echo "[update-docker] $INSTALL_DIR"
+echo "[update-docker] $DIR"
 mkdir -p data/backups
 if [[ -f data/card_system.db ]]; then
   cp -f data/card_system.db "data/backups/pre-update-$(date +%Y%m%d-%H%M).db"
@@ -15,6 +15,11 @@ git fetch origin main
 git reset --hard FETCH_HEAD
 echo "[ok] code $(head -1 VERSION 2>/dev/null || echo ?)"
 
-docker compose up -d --build
+if ! command -v docker >/dev/null 2>&1; then
+  echo "[error] docker CLI not found in container"
+  exit 1
+fi
+
+docker compose -f "$DIR/docker-compose.yml" up -d --build
 echo "[ok] container restarted"
-echo "[done] open /admin and re-check version"
+echo "[done]"

@@ -1,7 +1,7 @@
 FROM python:3.11-slim-bookworm
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends curl ca-certificates git docker.io \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
@@ -15,6 +15,8 @@ COPY config ./config
 COPY core ./core
 COPY sentinel ./sentinel
 COPY tools ./tools
+COPY scripts/update-docker.sh ./scripts/
+RUN chmod +x /app/scripts/update-docker.sh
 COPY run.sh ./
 
 RUN mkdir -p /app/data

@@ -2663,10 +2663,9 @@ ADMIN_HTML = r"""
         `<div class="controls" style="margin-top:4px;">`,
         `<button class="button" type="button" id="version-check-btn">重新检查</button>`,
         `<button class="button" type="button" id="version-backup-btn">备份数据库</button>`,
-        `<a class="button" href="#" id="version-download-btn">下载当前库</a>`,
         info.selfUpdateEnabled
           ? `<button class="button primary" type="button" id="version-update-btn">一键更新</button>`
-          : `<span class="subline">一键更新未启用（服务器设置 ENABLE_SELF_UPDATE=1）</span>`,
+          : `<button class="button primary" type="button" id="version-update-btn" disabled title="请设置 ENABLE_SELF_UPDATE=1">一键更新</button>`,
         `</div>`,
         `<pre class="version-log" id="version-update-log" hidden></pre>`,
       ].join("");
@@ -2674,10 +2673,6 @@ ADMIN_HTML = r"""
       $("version-check-btn")?.addEventListener("click", () => refreshVersionModal(true));
       $("version-backup-btn")?.addEventListener("click", () => runDatabaseBackup());
       $("version-update-btn")?.addEventListener("click", () => runSelfUpdate());
-      $("version-download-btn")?.addEventListener("click", (event) => {
-        event.preventDefault();
-        downloadDatabaseFile();
-      });
     }
 
     async function downloadDatabaseFile() {
@@ -2735,7 +2730,7 @@ ADMIN_HTML = r"""
     async function runSelfUpdate() {
       if (!await showConfirm({
         title: "一键更新",
-        message: "将执行 git pull、安装依赖并重启服务。更新前会自动备份数据库。确定继续？",
+        message: "将拉取 GitHub 最新代码、备份数据库并重建 Docker 容器。确定继续？",
         confirmText: "开始更新",
       })) return;
       const logEl = $("version-update-log");

@@ -2591,14 +2591,15 @@ def admin_update_run():
         status="running",
         detail={"script": str(script)},
     )
+    install_dir = (os.environ.get("HOST_INSTALL_DIR") or str(PROJECT_ROOT)).strip()
     try:
         result = subprocess.run(
             ["bash", str(script)],
-            cwd=str(PROJECT_ROOT),
+            cwd=install_dir,
             capture_output=True,
             text=True,
             timeout=600,
-            env={**os.environ, "INSTALL_DIR": str(PROJECT_ROOT)},
+            env={**os.environ, "INSTALL_DIR": install_dir, "HOST_INSTALL_DIR": install_dir},
         )
     except subprocess.TimeoutExpired:
         return jsonify({"ok": False, "error": "更新超时（10 分钟）"}), 504
