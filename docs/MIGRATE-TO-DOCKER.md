@@ -80,17 +80,17 @@ docker logs -f codex-credential-manager
 
 ---
 
-## Docker 日常更新
+## Docker 日常更新（一条命令）
 
 ```bash
-cd /www/wwwroot/Codex
-cp data/card_system.db data/backups/pre-update-$(date +%Y%m%d).db
-git fetch origin main
-git reset --hard FETCH_HEAD
-docker compose up -d --build
+bash /www/wwwroot/Codex/scripts/update-docker.sh
 ```
 
+或手动：`git fetch` + `git reset --hard FETCH_HEAD` + `docker compose up -d --build`
+
 数据在 `./data` 挂载卷，**不会丢库**。
+
+> **后台「一键更新」按钮**：是给 **systemd 裸机**用的；Docker 请在服务器 SSH 跑 `update-docker.sh`（容器里没有 git/docker 命令）。
 
 ---
 

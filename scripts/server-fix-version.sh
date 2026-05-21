@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -78,7 +79,8 @@ def _fetch_github_json(url: str) -> dict[str, Any] | None:
 
 def _fetch_remote_version_file(repo: str) -> dict[str, Any] | None:
     for branch in ("main", "master"):
-        url = f"https://raw.githubusercontent.com/{repo}/{branch}/VERSION"
+        bust = int(time.time())
+        url = f"https://raw.githubusercontent.com/{repo}/{branch}/VERSION?_{bust}"
         text = _fetch_url_text(url)
         if not text:
             continue
