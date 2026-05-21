@@ -1205,10 +1205,8 @@ ADMIN_HTML = r"""
     <div class="modal-scrim" aria-hidden="true"></div>
     <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="version-modal-title">
       <div class="modal-head">
-        <div class="modal-icon">v</div>
         <div class="modal-copy">
           <h4 class="modal-title" id="version-modal-title">版本与更新</h4>
-          <p class="modal-message">显示本机版本；仅在你点击「检查更新」时才会访问 GitHub。</p>
         </div>
       </div>
       <div class="version-panel" id="version-modal-body">加载中…</div>
@@ -2692,7 +2690,6 @@ ADMIN_HTML = r"""
         `<div class="version-row"><span>状态</span><strong>${escapeHtml(statusText)}</strong></div>`,
         remote.htmlUrl ? `<p class="version-note"><a href="${escapeHtml(remote.htmlUrl)}" target="_blank" rel="noopener">查看 GitHub 发布说明</a></p>` : "",
         remote.body ? `<p class="version-note">${escapeHtml(remote.body.slice(0, 600))}${remote.body.length > 600 ? "…" : ""}</p>` : "",
-        info.databasePath ? `<p class="version-note">数据库: ${escapeHtml(info.databasePath)}</p>` : "",
         (!envReady && readiness.issues && readiness.issues.length)
           ? `<p class="version-note" style="color:#c62828;">无法一键更新：${escapeHtml(readiness.issues.join("；"))}</p>`
           : "",
