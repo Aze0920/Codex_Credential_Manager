@@ -1208,7 +1208,7 @@ ADMIN_HTML = r"""
         <div class="modal-icon">v</div>
         <div class="modal-copy">
           <h4 class="modal-title" id="version-modal-title">版本与更新</h4>
-          <p class="modal-message">对比 GitHub 发布版本，备份数据库或执行服务器更新。</p>
+          <p class="modal-message">显示本机版本；仅在你点击「检查更新」时才会访问 GitHub。</p>
         </div>
       </div>
       <div class="version-panel" id="version-modal-body">加载中…</div>
@@ -2636,23 +2636,24 @@ ADMIN_HTML = r"""
 
     let versionInfoCache = null;
 
-    function renderVersionBadge(info) {
+    function renderVersionBadge(info, { highlightUpdate = false } = {}) {
       const btn = $("version-btn");
       if (!btn || !info) return;
       btn.textContent = `v${info.version || "?"}`;
-      btn.classList.toggle("has-update", !!info.updateAvailable);
-      btn.title = info.updateAvailable ? "有新版本，点击查看" : "当前版本，点击查看";
+      const showDot = highlightUpdate && !!info.updateAvailable;
+      btn.classList.toggle("has-update", showDot);
+      btn.title = showDot ? "有新版本，点击查看" : "点击查看版本（不自动检测 GitHub）";
     }
 
     async function loadVersionBadge() {
       try {
-        const res = await adminFetch("/api/admin/version?check=1");
+        const res = await adminFetch("/api/admin/version");
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "版本检查失败");
+        if (!res.ok) throw new Error(data.error || "版本加载失败");
         versionInfoCache = data;
-        renderVersionBadge(data);
+        renderVersionBadge(data, { highlightUpdate: false });
       } catch (_) {
-        /* 忽略版本检查失败，不影响仪表盘 */
+        /* 忽略版本加载失败，不影响仪表盘 */
       }
     }
 
@@ -2671,13 +2672,16 @@ ADMIN_HTML = r"""
 
     function renderVersionModalBody(info) {
       const remote = info.remote || {};
-      const latest = remote.tag ? `v${remote.tag}` : "未知";
-      const statusText = info.updateAvailable
-        ? "发现新版本"
-        : (info.upToDate ? "已是最新" : "无法对比远程版本");
+      const remoteChecked = !!(remote.tag || remote.available === false);
+      const latest = remote.tag ? `v${remote.tag}` : (remoteChecked ? "未知" : "未检查");
+      const statusText = !remoteChecked
+        ? "请点击「检查更新」"
+        : (info.updateAvailable
+          ? "发现新版本"
+          : (info.upToDate ? "已是最新" : "无法对比远程版本"));
       const readiness = info.updateReadiness || {};
       const envReady = readiness.ready !== false;
-      const canRunUpdate = !!(info.selfUpdateEnabled && info.updateAvailable && envReady);
+      const canRunUpdate = !!(remoteChecked && info.selfUpdateEnabled && info.updateAvailable && envReady);
       const updateTip = !info.selfUpdateEnabled
         ? "未启用 ENABLE_SELF_UPDATE"
         : (!envReady ? (readiness.issues || []).join("；") : (info.updateAvailable ? "拉取 GitHub 并重建容器" : (info.upToDate ? "已是最新，无需更新" : "暂无法确认是否有新版本")));
@@ -2693,7 +2697,7 @@ ADMIN_HTML = r"""
           ? `<p class="version-note" style="color:#c62828;">无法一键更新：${escapeHtml(readiness.issues.join("；"))}</p>`
           : "",
         `<div class="controls" style="margin-top:4px;">`,
-        `<button class="button" type="button" id="version-check-btn">重新检查</button>`,
+        `<button class="button" type="button" id="version-check-btn">检查更新</button>`,
         `<button class="button" type="button" id="version-backup-btn">备份数据库</button>`,
         updateBtnHtml,
         `</div>`,
@@ -2714,15 +2718,20 @@ ADMIN_HTML = r"""
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "检查失败");
       versionInfoCache = data;
-      renderVersionBadge(data);
+      renderVersionBadge(data, { highlightUpdate: true });
       renderVersionModalBody(data);
       if (showToastOnSuccess) showToast("已检查更新", "success");
     }
 
     async function openVersionModal() {
       $("version-modal").classList.add("show");
+      $("version-modal-body").textContent = "加载中…";
       try {
-        await refreshVersionModal(false);
+        const res = await adminFetch("/api/admin/version");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "加载失败");
+        versionInfoCache = data;
+        renderVersionModalBody(data);
       } catch (error) {
         $("version-modal-body").textContent = error.message || "加载失败";
       }
