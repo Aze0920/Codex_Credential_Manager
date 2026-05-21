@@ -2,6 +2,25 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.6] - 2026-05-22
+
+### 修复
+
+- Docker 挂载 `VERSION` / `app_version.py`，GitHub 版本对比（raw 备用）。
+- 新增 `scripts/server-fix-version.sh` 服务器一键修复脚本。
+
+## [1.0.5] - 2026-05-22
+
+### 新增
+
+- 补全 `scripts/update-server.sh`（`git fetch` + 备份数据库 + 重启服务）。
+- Windows 桌面 `scripts` 一键上传 / 保存 Token 工具。
+
+### 修复
+
+- 服务器旧版 Git 可用 `git reset --hard FETCH_HEAD` 更新。
+- 后台版本检查与 `ENABLE_SELF_UPDATE` 说明完善。
+
 ## [1.0.4] - 2026-05-21
 
 ### 新增

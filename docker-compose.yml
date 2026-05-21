@@ -13,6 +13,7 @@ services:
       NODE_EXECUTABLE: /usr/bin/node
     volumes:
       - ./data:/app/data
+      - ./VERSION:/app/VERSION:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8766/api/admin/health"]
       interval: 30s

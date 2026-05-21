@@ -1,3 +1,9 @@
+#!/usr/bin/env bash
+# One-shot fix: GitHub version check in Docker (run on server as root)
+set -e
+cd /www/wwwroot/Codex
+
+cat > core/app_version.py << 'PYEOF'
 # -*- coding: utf-8 -*-
 """应用版本与 GitHub 更新检查。"""
 from __future__ import annotations
@@ -31,7 +37,6 @@ def get_app_version() -> str:
 
 
 def compare_versions(current: str, remote: str) -> int:
-    """Return -1 if current < remote, 0 if equal, 1 if current > remote."""
     a = _parse_version(current)
     b = _parse_version(remote)
     length = max(len(a), len(b))
@@ -72,7 +77,6 @@ def _fetch_github_json(url: str) -> dict[str, Any] | None:
 
 
 def _fetch_remote_version_file(repo: str) -> dict[str, Any] | None:
-    """Fallback when api.github.com is blocked (e.g. some CN servers)."""
     for branch in ("main", "master"):
         url = f"https://raw.githubusercontent.com/{repo}/{branch}/VERSION"
         text = _fetch_url_text(url)
@@ -145,7 +149,7 @@ def fetch_remote_release() -> dict[str, Any]:
         "publishedAt": None,
         "htmlUrl": f"https://github.com/{repo}",
         "body": "",
-        "error": "无法连接 GitHub API；请确认服务器能访问 github.com，或已发布 Release",
+        "error": "无法连接 GitHub",
     }
 
 
@@ -171,3 +175,14 @@ def build_version_payload(*, include_remote: bool = True) -> dict[str, Any]:
         payload["updateAvailable"] = False
         payload["upToDate"] = None
     return payload
+PYEOF
+
+grep -q 'app_version.py:/app/core/app_version.py' docker-compose.yml 2>/dev/null || \
+  sed -i '/\.\/VERSION:\/app\/VERSION:ro/a\      - ./core/app_version.py:/app/core/app_version.py:ro' docker-compose.yml
+
+docker compose up -d --force-recreate
+sleep 2
+echo "=== test ==="
+docker exec codex-credential-manager cat /app/VERSION
+docker exec codex-credential-manager python3 -c "from core.app_version import fetch_remote_release; r=fetch_remote_release(); print('github', r.get('tag'), r.get('source'))"
+echo "=== done, refresh admin version page ==="
