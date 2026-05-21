@@ -1135,6 +1135,7 @@ ADMIN_HTML = r"""
             <h4>版本与更新</h4>
             <p class="about-version-line">当前版本：<strong id="about-app-version">加载中…</strong>　右上角「v」按钮可检查 GitHub 更新并一键拉取部署。</p>
             <ul class="about-changelog" id="about-changelog">
+              <li><span class="ver">v1.0.18</span> — 修复版本检测：只读 GitHub main/VERSION，避免 CDN/旧 Release 误报已是最新。</li>
               <li><span class="ver">v1.0.17</span> — 关于页增加「版本与更新」说明；版本弹窗界面精简。</li>
               <li><span class="ver">v1.0.16</span> — 版本号与更新说明整理。</li>
               <li><span class="ver">v1.0.15</span> — 版本弹窗去掉图标、副标题「仅点击检查更新才访问 GitHub」、数据库路径行。</li>

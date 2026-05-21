@@ -97,7 +97,11 @@ def check_update_readiness() -> dict[str, Any]:
 
 
 def _fetch_url_text(url: str, *, timeout: int = 12, accept: str | None = None) -> str | None:
-    headers = {"User-Agent": "Codex-Credential-Console"}
+    headers = {
+        "User-Agent": "Codex-Credential-Console",
+        "Cache-Control": "no-cache, no-store",
+        "Pragma": "no-cache",
+    }
     if accept:
         headers["Accept"] = accept
     request = urllib.request.Request(url, headers=headers)
@@ -145,19 +149,7 @@ def _fetch_main_commit_sha(repo: str) -> str | None:
 
 
 def _fetch_remote_version_file(repo: str) -> dict[str, Any] | None:
-    """Read VERSION from GitHub; use commit SHA to avoid raw CDN cache on /main/."""
-    sha = _fetch_main_commit_sha(repo)
-    if sha:
-        text = _fetch_url_text(f"https://raw.githubusercontent.com/{repo}/{sha}/VERSION")
-        tag = _version_tag_from_text(text or "")
-        if tag:
-            return _remote_version_payload(
-                repo,
-                tag,
-                source="raw-sha",
-                html_url=f"https://github.com/{repo}/blob/main/VERSION",
-            )
-
+    """Read main/VERSION only. Never use Release/tags (they lag behind git push)."""
     contents = _fetch_github_json(f"https://api.github.com/repos/{repo}/contents/VERSION?ref=main")
     if contents and contents.get("content"):
         try:
@@ -173,8 +165,24 @@ def _fetch_remote_version_file(repo: str) -> dict[str, Any] | None:
         except (ValueError, OSError):
             pass
 
+    sha = _fetch_main_commit_sha(repo)
+    if sha:
+        text = _fetch_url_text(
+            f"https://raw.githubusercontent.com/{repo}/{sha}/VERSION?sha={sha[:12]}"
+        )
+        tag = _version_tag_from_text(text or "")
+        if tag:
+            return _remote_version_payload(
+                repo,
+                tag,
+                source="raw-sha",
+                html_url=f"https://github.com/{repo}/blob/main/VERSION",
+            )
+
     for branch in ("main", "master"):
-        text = _fetch_url_text(f"https://raw.githubusercontent.com/{repo}/{branch}/VERSION")
+        text = _fetch_url_text(
+            f"https://raw.githubusercontent.com/{repo}/{branch}/VERSION?ref={branch}"
+        )
         tag = _version_tag_from_text(text or "")
         if tag:
             return _remote_version_payload(
@@ -186,71 +194,12 @@ def _fetch_remote_version_file(repo: str) -> dict[str, Any] | None:
     return None
 
 
-def _pick_newest_remote(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
-    best: dict[str, Any] | None = None
-    for item in candidates:
-        tag = item.get("tag")
-        if not tag:
-            continue
-        if best is None or compare_versions(str(best["tag"]), str(tag)) < 0:
-            best = item
-    return best
-
-
 def fetch_remote_release() -> dict[str, Any]:
-    """Remote version = max(main/VERSION, latest Release, all tags).
-
-    Older logic preferred releases/latest first, so a stale Release (e.g. v1.0.11)
-    hid a newer VERSION on main (e.g. 1.0.13) when you only sync via git push.
-    """
+    """Remote version = main/VERSION on GitHub (sync via git push)."""
     repo = get_github_repo()
-    candidates: list[dict[str, Any]] = []
-
     raw = _fetch_remote_version_file(repo)
     if raw:
-        candidates.append(raw)
-
-    latest = _fetch_github_json(f"https://api.github.com/repos/{repo}/releases/latest")
-    if latest and latest.get("tag_name"):
-        tag = str(latest["tag_name"]).lstrip("vV")
-        candidates.append(
-            {
-                "available": True,
-                "source": "release",
-                "repo": repo,
-                "tag": tag,
-                "name": str(latest.get("name") or tag),
-                "publishedAt": latest.get("published_at"),
-                "htmlUrl": latest.get("html_url") or f"https://github.com/{repo}/releases/latest",
-                "body": str(latest.get("body") or "").strip(),
-            }
-        )
-
-    tags_body = _fetch_url_text(
-        f"https://api.github.com/repos/{repo}/tags",
-        accept="application/vnd.github+json",
-    )
-    if tags_body:
-        try:
-            tags = json.loads(tags_body)
-        except json.JSONDecodeError:
-            tags = None
-        if isinstance(tags, list):
-            for item in tags:
-                tag = str(item.get("name") or "").lstrip("vV")
-                if tag:
-                    candidates.append(
-                        _remote_version_payload(
-                            repo,
-                            tag,
-                            source="tag",
-                            html_url=f"https://github.com/{repo}/releases/tag/v{tag}",
-                        )
-                    )
-
-    best = _pick_newest_remote(candidates)
-    if best:
-        return best
+        return raw
 
     return {
         "available": False,
@@ -259,9 +208,9 @@ def fetch_remote_release() -> dict[str, Any]:
         "tag": None,
         "name": None,
         "publishedAt": None,
-        "htmlUrl": f"https://github.com/{repo}",
+        "htmlUrl": f"https://github.com/{repo}/blob/main/VERSION",
         "body": "",
-        "error": "无法连接 GitHub API；请确认服务器能访问 github.com，或 main 分支存在 VERSION 文件",
+        "error": "无法读取 GitHub 上 main/VERSION；请确认服务器能访问 api.github.com",
     }
 
 

@@ -2,6 +2,12 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.18] - 2026-05-22
+
+### 修复
+
+- 版本检测：只认 GitHub **main/VERSION**（优先 API，不用 Release/标签）；修复 raw CDN 返回旧 1.0.16 导致误报「已是最新」。
+
 ## [1.0.17] - 2026-05-22
 
 ### 变更
