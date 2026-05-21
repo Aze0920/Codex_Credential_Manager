@@ -20,6 +20,9 @@ data/backups/*
 # 环境与密钥
 .env
 .env.local
+scripts/.github-token
+scripts/.github-token.local
+scripts/project-root.txt
 *.pem
 *.key
 

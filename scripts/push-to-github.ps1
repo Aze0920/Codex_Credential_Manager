@@ -1,5 +1,4 @@
-# Codex - push to GitHub
-# See docs/GITHUB-PUSH.md
+# Codex - push to GitHub (run from Desktop\scripts or project\scripts)
 param(
     [string]$RemoteUrl = 'https://github.com/Aze0920/Codex_Credential_Manager.git',
     [string]$Branch = 'main',
@@ -7,7 +6,32 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+
+function Get-ProjectRoot {
+    $cfg = Join-Path $PSScriptRoot 'project-root.txt'
+    if (Test-Path $cfg) {
+        $line = (Get-Content $cfg -TotalCount 1 -ErrorAction SilentlyContinue)
+        if ($line) {
+            $p = $line.Trim()
+            if (Test-Path $p) {
+                return (Resolve-Path $p).Path
+            }
+            throw "project-root.txt points to missing folder: $p"
+        }
+    }
+    $try = @(
+        (Join-Path $PSScriptRoot '..\GPTSessionWeb_Source'),
+        (Join-Path $PSScriptRoot '..')
+    )
+    foreach ($p in $try) {
+        if ((Test-Path $p) -and (Test-Path (Join-Path $p 'VERSION'))) {
+            return (Resolve-Path $p).Path
+        }
+    }
+    throw "Cannot find project. Edit scripts\project-root.txt (one line = full path to GPTSessionWeb_Source)"
+}
+
+$ProjectRoot = Get-ProjectRoot
 Set-Location $ProjectRoot
 
 function Write-Step([string]$Text) { Write-Host "[push] $Text" -ForegroundColor Cyan }
@@ -15,7 +39,8 @@ function Write-Ok([string]$Text) { Write-Host "[ok] $Text" -ForegroundColor Gree
 function Write-Warn([string]$Text) { Write-Host "[warn] $Text" -ForegroundColor Yellow }
 function Write-Err([string]$Text) { Write-Host "[error] $Text" -ForegroundColor Red }
 
-Write-Step "Project: $ProjectRoot"
+Write-Step "Script folder: $PSScriptRoot"
+Write-Step "Project folder: $ProjectRoot"
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Err 'Git not installed. https://git-scm.com/download/win'
@@ -52,7 +77,6 @@ git add -A
 $bad = Test-StagedSensitive
 if ($bad) {
     Write-Err "Sensitive file would be committed: $bad"
-    Write-Err 'Fix .gitignore then run: git reset HEAD'
     git reset HEAD -q 2>$null
     exit 1
 }
@@ -68,11 +92,17 @@ if (-not $porcelain) {
 Write-Step "git commit: $CommitMessage"
 & git commit -m $CommitMessage
 if ($LASTEXITCODE -ne 0) {
-    Write-Err 'Commit failed. Set user.name and user.email (see docs/GITHUB-PUSH.md)'
+    Write-Err 'Commit failed. Run setup-github-once.bat'
     exit 1
 }
 
 git branch -M $Branch 2>$null
+
+$tokenFile = Join-Path $PSScriptRoot '.github-token'
+$token = $null
+if (Test-Path $tokenFile) {
+    $token = (Get-Content $tokenFile -Raw).Trim()
+}
 
 $remotes = @(git remote 2>$null)
 if ($remotes -contains 'origin') {
@@ -81,11 +111,20 @@ if ($remotes -contains 'origin') {
     git remote add origin $RemoteUrl
 }
 
+$reject = "protocol=https`nhost=github.com`n`n"
+$reject | git credential reject 2>$null | Out-Null
+
 Write-Step "git push -> $RemoteUrl"
-Write-Warn 'Login: username Aze0920, password = GitHub Token'
-& git push -u origin $Branch
+if ($token) {
+    Write-Ok "Token: $tokenFile"
+    $pushUrl = "https://Aze0920:$token@github.com/Aze0920/Codex_Credential_Manager.git"
+    & git -c credential.helper= push $pushUrl $Branch
+} else {
+    Write-Warn "No token file. Run: $PSScriptRoot\save-github-token.bat"
+    & git push -u origin $Branch
+}
 if ($LASTEXITCODE -ne 0) {
-    Write-Err 'Push failed. Check Token and docs/GITHUB-PUSH.md'
+    Write-Err 'Push failed. Use CLASSIC token + repo scope, then save-github-token.bat'
     exit 1
 }
 

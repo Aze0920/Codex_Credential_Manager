@@ -25,24 +25,31 @@ git config --global user.name "Aze0920"
 git config --global user.email "你的GitHub邮箱@example.com"
 ```
 
-### 3. 配置 GitHub 登录（只需一次）
+### 3. 保存 Token 到本机（推荐，一键推送）
 
-推送时要能登录 GitHub，推荐 **Personal Access Token（PAT）**：
+**不要用「细粒度」令牌容易 403**，请用 **经典 Token**：
 
 1. 打开：https://github.com/settings/tokens  
-2. **Generate new token (classic)**  
-3. Note 填：`Codex push`  
-4. 勾选权限：**repo**（完整仓库权限）  
-5. 生成后 **复制 Token**（只显示一次，请保存到记事本）
+2. **Generate new token (classic)**（经典）  
+3. 勾选：**repo**  
+4. 生成后复制 Token  
 
-第一次 `git push` 时：
+5. 双击保存（**只在你电脑**，不会上传到 GitHub）：
 
-- 用户名：`Aze0920`  
-- 密码：粘贴 **Token**（不是 GitHub 登录密码）
+```
+scripts\save-github-token.bat
+```
 
-Windows 会记住凭据，以后一键推送不用再输。
+粘贴 Token 回车。文件在 `scripts/.github-token`，已被 `.gitignore` 排除。
 
-> 也可安装 [GitHub CLI](https://cli.github.com/) 后执行 `gh auth login`，按提示浏览器登录。
+> **切勿**把 Token 写进 `.ps1` / `.bat` / README，也不要发在聊天里。泄露后立刻在 GitHub 删除该 Token 并新建。
+
+### 403 Permission denied 怎么办？
+
+1. 到 GitHub **删除**旧 Token，新建 **classic + repo**  
+2. 运行 `save-github-token.bat` 保存新 Token  
+3. 再运行 `push-to-github.bat`  
+4. 确认 `git config --global user.name` 为 `Aze0920`（不是 `!GNAME!`）
 
 ---
 
