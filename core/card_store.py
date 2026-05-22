@@ -197,6 +197,49 @@ def _backfill_assigned_proxies(conn: sqlite3.Connection) -> None:
         )
 
 
+def prune_stale_account_proxies() -> dict[str, int]:
+    """代理从设置里删除后，清掉账号上仍绑定的旧代理（有池则按顺序重分）。"""
+    from core.app_settings import get_proxy_pool
+
+    pool = [str(item).strip() for item in get_proxy_pool() if str(item).strip()]
+    pool_set = set(pool)
+    cleared = 0
+    reassigned = 0
+    with LOCK:
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT id, assigned_proxy FROM pool_accounts
+                WHERE coalesce(assigned_proxy, '') != ''
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
+            reassign_index = 0
+            for row in rows:
+                proxy = str(row["assigned_proxy"] or "").strip()
+                if proxy in pool_set:
+                    continue
+                if pool:
+                    new_proxy = pool[reassign_index % len(pool)]
+                    reassign_index += 1
+                    conn.execute(
+                        "UPDATE pool_accounts SET assigned_proxy = ? WHERE id = ?",
+                        (new_proxy, row["id"]),
+                    )
+                    reassigned += 1
+                else:
+                    conn.execute(
+                        "UPDATE pool_accounts SET assigned_proxy = '' WHERE id = ?",
+                        (row["id"],),
+                    )
+                    cleared += 1
+            conn.commit()
+        finally:
+            conn.close()
+    return {"cleared": cleared, "reassigned": reassigned, "total": cleared + reassigned}
+
+
 def backfill_empty_account_proxies() -> int:
     updated = 0
     with LOCK:

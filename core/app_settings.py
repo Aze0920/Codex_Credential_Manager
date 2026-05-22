@@ -273,14 +273,17 @@ def update_settings(
             set_setting("admin_password", _hash_admin_password(password))
 
         proxies_backfilled = 0
+        proxies_pruned: dict[str, int] = {"cleared": 0, "reassigned": 0, "total": 0}
         if proxy_pool_text is not None:
             set_setting_json("proxy_pool", parse_proxy_pool_text(proxy_pool_text))
             try:
-                from core.card_store import backfill_empty_account_proxies
+                from core.card_store import backfill_empty_account_proxies, prune_stale_account_proxies
 
+                proxies_pruned = prune_stale_account_proxies()
                 proxies_backfilled = backfill_empty_account_proxies()
             except Exception:
                 proxies_backfilled = 0
+                proxies_pruned = {"cleared": 0, "reassigned": 0, "total": 0}
 
         if test_models_text is not None:
             models = parse_test_models_text(test_models_text)
@@ -315,6 +318,7 @@ def update_settings(
     settings = get_public_settings()
     if proxy_pool_text is not None:
         settings["proxiesBackfilled"] = proxies_backfilled
+        settings["proxiesPruned"] = proxies_pruned
     models = settings.get("models") or []
     default_model = settings.get("defaultModel") or DEFAULT_TEST_MODEL
     if default_model not in models:

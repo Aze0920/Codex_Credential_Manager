@@ -1894,13 +1894,11 @@ ADMIN_HTML = r"""
     }
 
     function buildProxyOptions(row) {
-      const current = row.assignedProxy ?? "";
+      const current = String(row.assignedProxy ?? "");
       const options = [...(testOptions.proxyOptions || [{ value: "", label: "直连（无代理）" }])];
-      if (current && !options.some((item) => item.value === current)) {
-        options.push({ value: current, label: `${row.proxyLabel || "已绑定代理"}（当前）` });
-      }
+      const selected = options.some((item) => item.value === current) ? current : "";
       return options.map((item) =>
-        `<option value="${escapeAttr(item.value)}" ${item.value === current ? "selected" : ""}>${escapeHtml(item.label)}</option>`
+        `<option value="${escapeAttr(item.value)}" ${item.value === selected ? "selected" : ""}>${escapeHtml(item.label)}</option>`
       ).join("");
     }
 
@@ -2513,9 +2511,16 @@ ADMIN_HTML = r"""
       await loadTestOptions();
       await loadAccounts().catch(() => {});
       const settings = data.settings || data;
+      const pruned = settings.proxiesPruned || {};
+      const prunedTotal = Number(pruned.total ?? 0);
       const backfill = Number(settings.proxiesBackfilled ?? 0);
-      if (backfill > 0) {
-        showToast(`设置已保存，已为 ${backfill} 个未绑定账号分配代理`, "success", 4000);
+      if (prunedTotal > 0 || backfill > 0) {
+        const parts = ["设置已保存"];
+        if (prunedTotal > 0) {
+          parts.push(`已处理 ${prunedTotal} 个失效代理（${pruned.reassigned || 0} 个重分，${pruned.cleared || 0} 个改直连）`);
+        }
+        if (backfill > 0) parts.push(`为 ${backfill} 个账号新分配代理`);
+        showToast(parts.join("，"), "success", 4500);
       }
       return data;
     }
