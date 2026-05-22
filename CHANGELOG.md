@@ -2,6 +2,12 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.21] - 2026-05-22
+
+### 修复
+
+- 「当前版本」优先读宿主机 `/host-codex/VERSION`（与 `git pull` 一致），避免未重建容器时仍显示镜像内旧版本号。
+
 ## [1.0.20] - 2026-05-22
 
 ### 修复

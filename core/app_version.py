@@ -23,9 +23,21 @@ def _parse_version(text: str) -> tuple[int, ...]:
     return tuple(int(p) for p in parts)
 
 
+def _version_file_candidates() -> list[Path]:
+    """Prefer host project VERSION (git pull) over image /app/VERSION when Docker mounts differ."""
+    paths: list[Path] = []
+    host_dir = Path(get_host_install_dir())
+    host_version = host_dir / "VERSION"
+    if host_version.is_file():
+        paths.append(host_version)
+    if VERSION_FILE.is_file() and VERSION_FILE not in paths:
+        paths.append(VERSION_FILE)
+    return paths
+
+
 def get_app_version() -> str:
-    if VERSION_FILE.is_file():
-        value = VERSION_FILE.read_text(encoding="utf-8").strip()
+    for path in _version_file_candidates():
+        value = path.read_text(encoding="utf-8").strip()
         if value:
             return value.splitlines()[0].strip()
     return "0.0.0"
