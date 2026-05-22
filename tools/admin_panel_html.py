@@ -1472,12 +1472,21 @@ ADMIN_HTML = r"""
       return text;
     }
 
+    function extractAdminErrorDetail(error, data = null) {
+      const payload = data || error?.apiData || {};
+      return String(payload.detail || payload.error || error?.message || "未知错误").trim();
+    }
+
     function formatAdminErrorForPanel(error, data = null) {
-      const msg = localizeAdminError(error?.message || error, "");
-      const detail = data?.detail || data?.error;
-      const lines = ["操作失败", `原因: ${msg || "未知"}`];
-      if (detail && String(detail).trim() && String(detail).trim() !== msg) {
-        lines.push(`详情: ${String(detail).trim()}`);
+      const payload = data || error?.apiData || {};
+      const detail = extractAdminErrorDetail(error, payload);
+      const summary = localizeAdminError(payload.error || error?.message || detail, detail || "未知错误");
+      const lines = ["操作失败"];
+      if (payload.errorType) lines.push(`类型: ${payload.errorType}`);
+      if (payload.stage) lines.push(`阶段: ${payload.stage}`);
+      lines.push(`原因: ${summary}`);
+      if (detail) {
+        lines.push("", "—— 详细日志 ——", detail);
       }
       return lines.join("\n");
     }
@@ -2761,7 +2770,7 @@ ADMIN_HTML = r"""
       });
       const data = await readAdminJson(res, "测试失败");
       if (!res.ok) {
-        const err = new Error(data.detail || data.error || "测试失败");
+        const err = new Error(extractAdminErrorDetail(null, data));
         err.apiData = data;
         throw err;
       }
@@ -2822,7 +2831,7 @@ ADMIN_HTML = r"""
       });
       const data = await readAdminJson(res, "重新登录失败");
       if (!res.ok) {
-        const err = new Error(data.detail || data.error || "重新登录失败");
+        const err = new Error(extractAdminErrorDetail(null, data));
         err.apiData = data;
         throw err;
       }
@@ -2849,8 +2858,12 @@ ADMIN_HTML = r"""
         method: "POST",
         body: JSON.stringify({ accountId }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "查询额度失败");
+      const data = await readAdminJson(res, "查询额度失败");
+      if (!res.ok) {
+        const err = new Error(extractAdminErrorDetail(null, data));
+        err.apiData = data;
+        throw err;
+      }
       await loadAccounts();
       const refreshedBox = document.querySelector(`.inline-test-result[data-account-id="${accountId}"]`);
       if (refreshedBox) refreshedBox.textContent = formatQuotaResult(data.quota);
@@ -4062,7 +4075,8 @@ ADMIN_HTML = r"""
           } catch (error) {
             const resultBox = document.querySelector(`.inline-test-result[data-account-id="${accountId}"]`);
             if (resultBox) resultBox.textContent = formatAdminErrorForPanel(error, error.apiData);
-            showToast(localizeAdminError(error.message) || "测试失败", "error", 8000);
+            const toastMsg = extractAdminErrorDetail(error, error.apiData);
+            showToast(toastMsg.length > 160 ? `${toastMsg.slice(0, 160)}…` : toastMsg, "error", 12000);
           }
           return;
         }
@@ -4073,7 +4087,8 @@ ADMIN_HTML = r"""
           } catch (error) {
             const resultBox = document.querySelector(`.inline-test-result[data-account-id="${accountId}"]`);
             if (resultBox) resultBox.textContent = formatAdminErrorForPanel(error, error.apiData);
-            showToast(localizeAdminError(error.message) || "重新登录失败", "error", 8000);
+            const toastMsg = extractAdminErrorDetail(error, error.apiData);
+            showToast(toastMsg.length > 160 ? `${toastMsg.slice(0, 160)}…` : toastMsg, "error", 12000);
           }
           return;
         }
@@ -4082,7 +4097,10 @@ ADMIN_HTML = r"""
           try {
             await runAccountQuota(accountId);
           } catch (error) {
-            showToast(error.message || "查询额度失败", "error");
+            const resultBox = document.querySelector(`.inline-test-result[data-account-id="${accountId}"]`);
+            if (resultBox) resultBox.textContent = formatAdminErrorForPanel(error, error.apiData);
+            const toastMsg = extractAdminErrorDetail(error, error.apiData);
+            showToast(toastMsg.length > 160 ? `${toastMsg.slice(0, 160)}…` : toastMsg, "error", 12000);
           }
           return;
         }

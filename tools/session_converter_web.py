@@ -251,13 +251,28 @@ def get_request_payload() -> dict[str, Any]:
     return request.get_json(silent=True) or {}
 
 
+def _admin_error_detail(exc: BaseException) -> str:
+    parts: list[str] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        text = str(current).strip()
+        if text:
+            parts.append(text)
+        current = current.__cause__  # type: ignore[assignment]
+    return "\n".join(parts)
+
+
 def api_error_response(exc: BaseException, status: int = 400):
     lang = get_request_lang()
     fallback = "Operation failed. Please try again." if lang == "en" else "操作失败，请稍后重试"
     body: dict[str, Any] = {"error": public_error_message(exc, lang=lang, fallback=fallback)}
-    raw = str(exc).strip()
-    if raw and request.path.startswith("/api/admin/"):
-        body["detail"] = raw
+    raw = _admin_error_detail(exc)
+    if request.path.startswith("/api/admin/"):
+        body["errorType"] = type(exc).__name__
+        if raw:
+            body["detail"] = raw
     return jsonify(body), status
 
 

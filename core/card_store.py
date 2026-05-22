@@ -1656,11 +1656,35 @@ def login_pool_account(
                 rotate_account_proxy_from_pool(account_id)
                 proxy_rotated = True
                 continue
-            _mark_account_abnormal(account_id, quota=quota if isinstance(quota, dict) else None, error=str(exc))
-            raise last_exc from exc
+            stage = "额度校验" if credentials else "邮箱登录"
+            proxy_label = _proxy_label(_account_proxy(row) if row else proxy)
+            error_text = f"[{stage}] {exc}"
+            _mark_account_abnormal(
+                account_id,
+                quota=quota if isinstance(quota, dict) else None,
+                error=error_text,
+            )
+            log_exception(
+                category="login",
+                action="login.manual.failed",
+                message=f"{row['email']} 重新登录失败 ({stage})",
+                exc=exc,
+                account_id=account_id,
+                email=row["email"],
+                duration_ms=int((time.time() - started) * 1000),
+                detail={
+                    "stage": stage,
+                    "proxy": proxy_label,
+                    "attempt": attempt + 1,
+                    "proxyRotated": proxy_rotated,
+                    "quota": quota if isinstance(quota, dict) else None,
+                },
+            )
+            raise ValueError(error_text) from exc
 
     if not credentials or not quota:
-        raise ValueError("重新登录失败")
+        fallback = str(last_exc).strip() if last_exc else "未知错误"
+        raise ValueError(f"重新登录失败: {fallback}")
 
     row = get_pool_account(account_id) or row
     proxy = _account_proxy(row)
