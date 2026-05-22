@@ -21,7 +21,7 @@ services:
       GITHUB_REPO: Aze0920/Codex_Credential_Manager
     volumes:
       - ./data:/app/data
-      - ./VERSION:/app/VERSION
+      # 勿单独挂载 VERSION 文件（宿主机若误建成目录会导致 compose 启动失败）；由 entrypoint 从 /host-codex/VERSION 同步
       - ./core:/app/core:ro
       - ./tools:/app/tools:ro
       - ./scripts:/app/scripts:ro

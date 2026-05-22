@@ -2,6 +2,12 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.36] - 2026-05-22
+
+### 修复
+
+- 移除 `docker-compose` 中 `./VERSION` 文件挂载（宿主机误为目录时会导致 `not a directory` 无法启动）；更新脚本自动修复误建的 `VERSION` 目录。
+
 ## [1.0.35] - 2026-05-22
 
 ### 修复

@@ -74,6 +74,18 @@ VER="$(head -1 VERSION 2>/dev/null || echo ?)"
 progress 45 "代码已同步到 v${VER}"
 log "[ok] synced $VER"
 
+# Docker 在挂载不存在的文件时会创建同名目录，导致 ./VERSION 类挂载失败
+if [ -d "$DIR/VERSION" ]; then
+  ver="$(cat "$DIR/VERSION/VERSION" 2>/dev/null || echo "")"
+  rm -rf "$DIR/VERSION"
+  log "[fix] 已删除误建的 VERSION 目录"
+  if [ -n "$ver" ]; then echo "$ver" >"$DIR/VERSION"; fi
+fi
+if [ ! -f "$DIR/VERSION" ]; then
+  echo "0.0.0" >"$DIR/VERSION"
+  log "[fix] 已创建 VERSION 文件"
+fi
+
 progress 50 "停止旧容器"
 compose_cmd down --remove-orphans >>"$LOG" 2>&1 || true
 docker rm -f "$MAIN_CONTAINER" >>"$LOG" 2>&1 || true
