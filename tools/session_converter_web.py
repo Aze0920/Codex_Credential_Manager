@@ -254,7 +254,11 @@ def get_request_payload() -> dict[str, Any]:
 def api_error_response(exc: BaseException, status: int = 400):
     lang = get_request_lang()
     fallback = "Operation failed. Please try again." if lang == "en" else "操作失败，请稍后重试"
-    return jsonify({"error": public_error_message(exc, lang=lang, fallback=fallback)}), status
+    body: dict[str, Any] = {"error": public_error_message(exc, lang=lang, fallback=fallback)}
+    raw = str(exc).strip()
+    if raw and request.path.startswith("/api/admin/"):
+        body["detail"] = raw
+    return jsonify(body), status
 
 
 def _register_api_error_handlers(app: Flask) -> None:

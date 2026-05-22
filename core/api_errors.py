@@ -73,6 +73,14 @@ _TECH_ZH: dict[str, str] = {
     "no such column": "数据库结构异常，请重启服务",
     "unique constraint failed": "数据冲突，请刷新后重试",
     "foreign key constraint failed": "数据关联异常，请刷新后重试",
+    "http error 403": "HTTP 403 禁止访问（登录可能已失效，请点「开始登录」）",
+    "http error 401": "HTTP 401 未授权（请重新登录或刷新 token）",
+    "http error 429": "HTTP 429 请求过于频繁，请稍后再试",
+    "http error 500": "HTTP 500 上游服务错误",
+    "http error 502": "HTTP 502 上游网关错误",
+    "http error 503": "HTTP 503 服务暂时不可用",
+    "failed to fetch": "网络请求失败（连接中断或 502，请稍后重试）",
+    "notimplementederror": "测试引擎版本过旧，请重启 Docker 容器",
 }
 
 _TECH_EN: dict[str, str] = {
@@ -225,4 +233,5 @@ def public_error_message(
     if isinstance(exc, sqlite3.Error):
         return translate_user_message("数据库操作失败，请稍后重试", resolved_lang)
 
-    return resolved_fallback
+    # 未知英文技术错误：保留原文，避免管理后台只看到「操作失败」
+    return translate_user_message(message, resolved_lang)

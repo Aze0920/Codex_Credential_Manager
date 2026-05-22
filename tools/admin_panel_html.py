@@ -1430,17 +1430,30 @@ ADMIN_HTML = r"""
       "no such column": "数据库结构异常，请重启服务",
       "unique constraint failed": "数据冲突，请刷新后重试",
       "foreign key constraint failed": "数据关联异常，请刷新后重试",
+      "http error 403": "HTTP 403 禁止访问（登录可能已失效，请点「开始登录」）",
+      "http error 401": "HTTP 401 未授权",
+      "failed to fetch": "网络请求失败（连接中断或 502）",
     };
 
-    function localizeAdminError(message, fallback = "操作失败，请稍后重试") {
+    function localizeAdminError(message, fallback = "") {
       const text = String(message || "").trim();
-      if (!text) return fallback;
+      if (!text) return fallback || "操作失败";
       if (/[\u4e00-\u9fff]/.test(text)) return text;
       const lowered = text.toLowerCase();
       for (const [key, value] of Object.entries(ADMIN_ERROR_ZH_MAP)) {
         if (lowered.includes(key)) return value;
       }
-      return fallback;
+      return text;
+    }
+
+    function formatAdminErrorForPanel(error, data = null) {
+      const msg = localizeAdminError(error?.message || error, "");
+      const detail = data?.detail || data?.error;
+      const lines = ["操作失败", `原因: ${msg || "未知"}`];
+      if (detail && String(detail).trim() && String(detail).trim() !== msg) {
+        lines.push(`详情: ${String(detail).trim()}`);
+      }
+      return lines.join("\n");
     }
 
     const LOG_LEVEL_LABELS = { debug: "调试", info: "信息", warn: "警告", error: "错误" };
@@ -1499,7 +1512,14 @@ ADMIN_HTML = r"""
         "Authorization": `Bearer ${token()}`,
         ...(options.headers || {}),
       };
-      const res = await fetch(url, { ...options, headers });
+      let res;
+      try {
+        res = await fetch(url, { ...options, headers });
+      } catch (error) {
+        const err = new Error(error?.message || "网络请求失败");
+        err.apiData = { detail: String(error?.message || error) };
+        throw err;
+      }
       if (res.status === 401) {
         setToken("");
         showLogin();
@@ -2060,7 +2080,7 @@ ADMIN_HTML = r"""
       if (result.latencyMs != null) lines.push(`测试耗时: ${result.latencyMs} ms`);
       if (result.quotaMs != null) lines.push(`额度耗时: ${result.quotaMs} ms`);
       if (result.reply) lines.push(`回复: ${result.reply}`);
-      if (result.error) lines.push(`错误: ${localizeAdminError(result.error, result.error)}`);
+      if (result.error) lines.push(`错误: ${localizeAdminError(result.error)}`);
       if (includeQuota && result.quota) {
         lines.push("");
         lines.push("额度:");
@@ -2649,7 +2669,11 @@ ADMIN_HTML = r"""
         body: JSON.stringify({ accountId, model, message: message || "hi" }),
       });
       const data = await readAdminJson(res, "测试失败");
-      if (!res.ok) throw new Error(data.error || "测试失败");
+      if (!res.ok) {
+        const err = new Error(data.detail || data.error || "测试失败");
+        err.apiData = data;
+        throw err;
+      }
       await loadAccounts();
       showToast(data.result?.ok ? "测试通过" : localizeAdminError(data.result?.error, "测试失败"), data.result?.ok ? "success" : "error", data.result?.ok ? 1500 : 5000);
       return data;
@@ -2673,7 +2697,11 @@ ADMIN_HTML = r"""
         body: JSON.stringify({ accountId, force: true }),
       });
       const data = await readAdminJson(res, "登录失败");
-      if (!res.ok) throw new Error(data.error || "登录失败");
+      if (!res.ok) {
+        const err = new Error(data.detail || data.error || "登录失败");
+        err.apiData = data;
+        throw err;
+      }
       if (resultBox) resultBox.textContent = formatLoginResult(data);
       await loadAccounts();
       showToast(`登录成功：${formatLoginMode(data.loginMode)}`, "success", 2500);
@@ -3886,8 +3914,8 @@ ADMIN_HTML = r"""
             await runAccountTest(accountId, model, message);
           } catch (error) {
             const resultBox = document.querySelector(`.inline-test-result[data-account-id="${accountId}"]`);
-            if (resultBox) resultBox.textContent = localizeAdminError(error.message, "测试失败");
-            showToast(error.message || "测试失败", "error");
+            if (resultBox) resultBox.textContent = formatAdminErrorForPanel(error, error.apiData);
+            showToast(localizeAdminError(error.message) || "测试失败", "error", 8000);
           }
           return;
         }
@@ -3897,8 +3925,8 @@ ADMIN_HTML = r"""
             await runAccountLogin(accountId);
           } catch (error) {
             const resultBox = document.querySelector(`.inline-test-result[data-account-id="${accountId}"]`);
-            if (resultBox) resultBox.textContent = localizeAdminError(error.message, "登录失败");
-            showToast(error.message || "登录失败", "error", 6000);
+            if (resultBox) resultBox.textContent = formatAdminErrorForPanel(error, error.apiData);
+            showToast(localizeAdminError(error.message) || "登录失败", "error", 8000);
           }
           return;
         }
