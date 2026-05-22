@@ -3125,7 +3125,14 @@ def admin_account_test_options():
     denied = admin_required()
     if denied:
         return denied
-    return jsonify(get_test_settings())
+    from core.card_store import sync_account_proxies_with_pool
+
+    payload = get_test_settings()
+    try:
+        payload["proxySync"] = sync_account_proxies_with_pool()
+    except Exception:
+        payload["proxySync"] = None
+    return jsonify(payload)
 
 
 @app.post("/api/admin/accounts/proxy")

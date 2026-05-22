@@ -277,10 +277,15 @@ def update_settings(
         if proxy_pool_text is not None:
             set_setting_json("proxy_pool", parse_proxy_pool_text(proxy_pool_text))
             try:
-                from core.card_store import backfill_empty_account_proxies, prune_stale_account_proxies
+                from core.card_store import sync_account_proxies_with_pool
 
-                proxies_pruned = prune_stale_account_proxies()
-                proxies_backfilled = backfill_empty_account_proxies()
+                sync_result = sync_account_proxies_with_pool()
+                proxies_pruned = sync_result.get("proxiesPruned") or {
+                    "cleared": 0,
+                    "reassigned": 0,
+                    "total": 0,
+                }
+                proxies_backfilled = int(sync_result.get("proxiesBackfilled") or 0)
             except Exception:
                 proxies_backfilled = 0
                 proxies_pruned = {"cleared": 0, "reassigned": 0, "total": 0}

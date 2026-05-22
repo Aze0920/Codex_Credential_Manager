@@ -2411,9 +2411,11 @@ ADMIN_HTML = r"""
       renderAutoTestStatus(settings);
       renderApiSettings(settings);
       testOptions = {
+        ...testOptions,
         models: settings.models || testOptions.models,
         defaultModel: settings.defaultModel || testOptions.defaultModel,
         defaultMessage: settings.defaultMessage || testOptions.defaultMessage,
+        proxyOptions: settings.proxyOptions || testOptions.proxyOptions,
       };
     }
 
@@ -2574,7 +2576,22 @@ ADMIN_HTML = r"""
       const res = await adminFetch("/api/admin/accounts/test-options");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "加载测试选项失败");
-      testOptions = data;
+      testOptions = {
+        ...testOptions,
+        ...data,
+        proxyOptions: data.proxyOptions?.length ? data.proxyOptions : testOptions.proxyOptions,
+      };
+      const sync = data.proxySync || {};
+      const synced = Number(sync.proxiesPruned?.total || 0) + Number(sync.proxiesBackfilled || 0);
+      if (synced > 0) {
+        await loadAccounts().catch(() => {});
+      } else if (testingAccount) {
+        const refreshed = (listState.lastAccounts || []).find((item) => item.id === testingAccount.id);
+        if (refreshed) {
+          testingAccount = refreshed;
+          renderAccounts({ items: listState.lastAccounts || [], ...(listState.accountsMeta || {}) });
+        }
+      }
     }
 
     function currentImportRemark() {

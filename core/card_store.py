@@ -240,6 +240,13 @@ def prune_stale_account_proxies() -> dict[str, int]:
     return {"cleared": cleared, "reassigned": reassigned, "total": cleared + reassigned}
 
 
+def sync_account_proxies_with_pool() -> dict[str, Any]:
+    """将账号代理与当前代理池对齐：失效的清除/重分，空的自动分配。"""
+    pruned = prune_stale_account_proxies()
+    backfilled = backfill_empty_account_proxies()
+    return {"proxiesPruned": pruned, "proxiesBackfilled": backfilled}
+
+
 def backfill_empty_account_proxies() -> int:
     updated = 0
     with LOCK:
