@@ -153,6 +153,7 @@ def _migrate_pool_accounts(conn: sqlite3.Connection) -> None:
         ("assigned_proxy", "TEXT NOT NULL DEFAULT ''"),
         ("mailbox_material", "TEXT NOT NULL DEFAULT ''"),
         ("pool_type", "TEXT NOT NULL DEFAULT 'pp'"),
+        ("remark", "TEXT NOT NULL DEFAULT ''"),
     )
     for name, typedef in migrations:
         if name not in columns:
@@ -413,12 +414,13 @@ def add_pool_accounts(records: list[dict[str, str]], *, pool_type: str = "pp") -
                 if not assigned_proxy and proxy_pool:
                     assigned_proxy = proxy_pool[proxy_index % len(proxy_pool)]
                     proxy_index += 1
+                remark = str(item.get("remark") or "").strip()
                 conn.execute(
                     """
                     INSERT INTO pool_accounts (
                         id, email, password, client_id, refresh_token, material,
-                        account_type, oauth_data, group_name, assigned_proxy, pool_type, status, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?)
+                        account_type, oauth_data, group_name, assigned_proxy, pool_type, remark, status, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?)
                     """,
                     (
                         row_id,
@@ -432,6 +434,7 @@ def add_pool_accounts(records: list[dict[str, str]], *, pool_type: str = "pp") -
                         group_name,
                         assigned_proxy,
                         normalized_pool,
+                        remark,
                         now,
                     ),
                 )
@@ -488,6 +491,15 @@ def _parse_import_records(
             account_type=record.get("account_type") or normalized_type,
         )
     return records, parse_skipped, normalized_type
+
+
+def _apply_import_remark(records: list[dict[str, Any]], remark: str | None) -> None:
+    text = str(remark or "").strip()
+    if not text:
+        return
+    for record in records:
+        if not str(record.get("remark") or "").strip():
+            record["remark"] = text
 
 
 def _build_provision_detail(
@@ -758,6 +770,7 @@ def iter_import_pool_accounts(
     auth_input: str = "",
     state: str = "",
     pool_type: str = "pp",
+    remark: str = "",
 ) -> Iterator[dict[str, Any]]:
     yield {"type": "phase", "message": "正在解析账号..."}
     try:
@@ -772,6 +785,8 @@ def iter_import_pool_accounts(
     except ValueError as exc:
         yield {"type": "error", "error": str(exc)}
         return
+
+    _apply_import_remark(records, remark)
 
     yield {"type": "phase", "message": f"正在写入数据库，共 {len(records)} 个账号..."}
     imported, db_skipped, inserted_ids = add_pool_accounts(records, pool_type=pool_type)
@@ -877,6 +892,7 @@ def import_pool_accounts(
     auth_input: str = "",
     state: str = "",
     pool_type: str = "pp",
+    remark: str = "",
 ) -> dict[str, Any]:
     summary: dict[str, Any] | None = None
     for event in iter_import_pool_accounts(
@@ -887,6 +903,7 @@ def import_pool_accounts(
         auth_input=auth_input,
         state=state,
         pool_type=pool_type,
+        remark=remark,
     ):
         if event.get("type") == "done":
             summary = event
@@ -949,6 +966,7 @@ def import_pool_accounts_background(
     auth_input: str = "",
     state: str = "",
     pool_type: str = "pp",
+    remark: str = "",
 ) -> dict[str, Any]:
     records, parse_skipped, _normalized_type = _parse_import_records(
         material,
@@ -958,6 +976,7 @@ def import_pool_accounts_background(
         auth_input=auth_input,
         state=state,
     )
+    _apply_import_remark(records, remark)
     imported, db_skipped, inserted_ids = add_pool_accounts(records, pool_type=pool_type)
     enqueue_provision_accounts(inserted_ids)
     return {
@@ -1392,13 +1411,38 @@ def get_pool_account(account_id: str) -> sqlite3.Row | None:
                 """
                 SELECT id, email, password, client_id, refresh_token, material,
                        account_type, oauth_data, status, test_status, test_result, last_test_at,
-                       quota_data, quota_updated_at, assigned_proxy, mailbox_material
+                       quota_data, quota_updated_at, assigned_proxy, mailbox_material, remark
                 FROM pool_accounts WHERE id = ?
                 """,
                 (account_id,),
             ).fetchone()
         finally:
             conn.close()
+
+
+def update_pool_account_remark(account_id: str, remark: str | None) -> dict[str, Any]:
+    account_id = str(account_id or "").strip()
+    if not account_id:
+        raise ValueError("缺少 accountId")
+    text = str(remark or "").strip()
+    with LOCK:
+        conn = _connect()
+        try:
+            row = conn.execute("SELECT id, email FROM pool_accounts WHERE id = ?", (account_id,)).fetchone()
+            if not row:
+                raise ValueError("账号不存在")
+            conn.execute("UPDATE pool_accounts SET remark = ? WHERE id = ?", (text, account_id))
+            conn.commit()
+        finally:
+            conn.close()
+    log_activity(
+        category="admin",
+        action="account.remark",
+        message=f"更新账号备注: {row['email']}",
+        status="success",
+        detail={"accountId": account_id, "remark": text},
+    )
+    return {"ok": True, "accountId": account_id, "remark": text}
 
 
 def update_account_test(account_id: str, *, status: str, result: dict[str, Any]) -> None:
@@ -2240,7 +2284,7 @@ def list_accounts_page(
                 SELECT id, email, status, card_code, created_at, assigned_at,
                        account_type, group_name, oauth_data, test_status, test_result, last_test_at,
                        quota_data, quota_updated_at, assigned_proxy, mailbox_material,
-                       client_id, refresh_token, material, pool_type
+                       client_id, refresh_token, material, pool_type, remark
                 FROM pool_accounts
                 {where_sql}
                 ORDER BY group_name ASC, created_at DESC
@@ -2273,6 +2317,7 @@ def list_accounts_page(
                         "proxyLabel": _proxy_label(_account_proxy(row)),
                         "hasRefreshToken": account_has_chatgpt_refresh_token(row),
                         "hasMailbox": account_has_mailbox(row),
+                        "remark": str(row["remark"] or "").strip() if "remark" in row.keys() else "",
                     }
                 )
             return {

@@ -67,6 +67,7 @@ from core.card_store import (
     link_optional_oauth_pool_account,
     reauthorize_pool_account,
     update_pool_account_proxy,
+    update_pool_account_remark,
     test_pool_account,
 )
 from core.openai_oauth import generate_auth_url
@@ -2821,6 +2822,7 @@ def admin_import_accounts():
             "auth_input": str(payload.get("authInput") or payload.get("auth_input") or ""),
             "state": str(payload.get("state") or ""),
             "pool_type": str(payload.get("poolType") or payload.get("pool_type") or "pp"),
+            "remark": str(payload.get("remark") or ""),
         }
         stream = bool(payload.get("stream"))
         background = payload.get("background", True)
@@ -2859,6 +2861,21 @@ def admin_import_accounts():
     except Exception as exc:
         return api_error_response(exc)
     return jsonify({**result, "stats": get_stats()})
+
+
+@app.post("/api/admin/accounts/remark")
+def admin_update_account_remark():
+    denied = admin_required()
+    if denied:
+        return denied
+    payload = get_request_payload()
+    try:
+        account_id = str(payload.get("accountId") or payload.get("id") or "").strip()
+        remark = str(payload.get("remark") or "")
+        result = update_pool_account_remark(account_id, remark)
+    except Exception as exc:
+        return api_error_response(exc)
+    return jsonify(result)
 
 
 @app.post("/api/admin/accounts/mailbox-link")

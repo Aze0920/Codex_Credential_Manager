@@ -614,6 +614,68 @@ ADMIN_HTML = r"""
       border-color: transparent;
       background: linear-gradient(135deg, var(--blue), var(--teal));
     }
+    .import-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 16px;
+      margin-bottom: 12px;
+    }
+    .import-toolbar .import-tabs { margin-bottom: 0; }
+    .import-remark-field {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 200px;
+    }
+    .import-remark-field label {
+      font-size: 13px;
+      color: #64748b;
+      white-space: nowrap;
+    }
+    .import-remark-field input {
+      flex: 1;
+      min-height: var(--control-h);
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .account-remark-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      background: rgba(241, 245, 255, 0.9);
+      border: 1px solid rgba(167, 183, 214, 0.35);
+    }
+    .account-remark-label {
+      font-size: 13px;
+      color: #64748b;
+      white-space: nowrap;
+    }
+    .account-remark-text {
+      flex: 1;
+      font-size: 14px;
+      color: #172033;
+      min-height: 20px;
+      cursor: text;
+      word-break: break-word;
+    }
+    .account-remark-text.is-empty {
+      color: #94a3b8;
+      font-style: italic;
+    }
+    .account-remark-input {
+      flex: 1;
+      min-height: 36px;
+      padding: 6px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--blue);
+      font-size: 14px;
+    }
     .test-panel {
       padding: 14px;
       border-radius: 16px;
@@ -897,9 +959,15 @@ ADMIN_HTML = r"""
         <section class="panel">
           <h3 id="accounts-pool-title">PP 账号池</h3>
           <h4 style="margin:0 0 12px;font-size:14px;color:#66748f;font-weight:600;">添加账号</h4>
-          <div class="import-tabs">
-            <button class="import-tab active" data-import-type="email">Outlook 邮箱</button>
-            <button class="import-tab" data-import-type="oauth">ChatGPT OAuth</button>
+          <div class="import-toolbar">
+            <div class="import-tabs">
+              <button class="import-tab active" data-import-type="email">Outlook 邮箱</button>
+              <button class="import-tab" data-import-type="oauth">ChatGPT OAuth</button>
+            </div>
+            <div class="import-remark-field">
+              <label for="import-remark">备注</label>
+              <input id="import-remark" type="text" placeholder="选填，导入时写入每个新账号；不填则为空">
+            </div>
           </div>
 
           <div id="email-import-panel">
@@ -1941,6 +2009,11 @@ ADMIN_HTML = r"""
       return `
         <div class="test-panel" data-inline-test="${row.id}">
           <strong>测试账号：${row.email}</strong>
+          <div class="account-remark-row" data-account-id="${row.id}">
+            <span class="account-remark-label">备注</span>
+            <span class="account-remark-text ${row.remark ? "" : "is-empty"}" data-remark-display data-account-id="${row.id}" title="双击编辑">${escapeHtml(row.remark || "双击添加备注")}</span>
+            <input class="account-remark-input" data-remark-input data-account-id="${row.id}" type="text" value="${escapeHtml(row.remark || "")}" hidden>
+          </div>
           <div class="test-grid">
             <div class="field" style="margin-top:0;">
               <label>模型</label>
@@ -2403,10 +2476,65 @@ ADMIN_HTML = r"""
       testOptions = data;
     }
 
+    function currentImportRemark() {
+      return ($("import-remark")?.value || "").trim();
+    }
+
+    async function saveAccountRemark(accountId, remark) {
+      const res = await adminFetch("/api/admin/accounts/remark", {
+        method: "POST",
+        body: JSON.stringify({ accountId, remark: remark || "" }),
+      });
+      const data = await readAdminJson(res, "保存备注失败");
+      if (!res.ok) throw new Error(data.error || "保存备注失败");
+      const text = String(data.remark || "").trim();
+      for (const row of listState.lastAccounts || []) {
+        if (row.id === accountId) row.remark = text;
+      }
+      if (testingAccount && testingAccount.id === accountId) testingAccount.remark = text;
+      return text;
+    }
+
+    function beginRemarkEdit(displayEl) {
+      const accountId = displayEl.dataset.accountId;
+      const input = document.querySelector(`[data-remark-input][data-account-id="${accountId}"]`);
+      if (!input) return;
+      input.hidden = false;
+      displayEl.hidden = true;
+      input.value = displayEl.classList.contains("is-empty") ? "" : displayEl.textContent.trim();
+      input.focus();
+      input.select();
+    }
+
+    async function finishRemarkEdit(inputEl) {
+      const accountId = inputEl.dataset.accountId;
+      const display = document.querySelector(`[data-remark-display][data-account-id="${accountId}"]`);
+      const value = inputEl.value.trim();
+      try {
+        await saveAccountRemark(accountId, value);
+        if (display) {
+          display.textContent = value || "双击添加备注";
+          display.classList.toggle("is-empty", !value);
+          display.hidden = false;
+        }
+        inputEl.hidden = true;
+        showToast("备注已保存", "success");
+      } catch (error) {
+        showToast(error.message || "保存失败", "error");
+        if (display) display.hidden = false;
+        inputEl.hidden = true;
+      }
+    }
+
     async function runImportFast(payload, { clearInputs } = {}) {
       const res = await adminFetch("/api/admin/accounts/import", {
         method: "POST",
-        body: JSON.stringify({ ...payload, poolType: currentAccountPoolType(), background: true }),
+        body: JSON.stringify({
+          ...payload,
+          remark: payload.remark != null ? payload.remark : currentImportRemark(),
+          poolType: currentAccountPoolType(),
+          background: true,
+        }),
       });
       const data = await readAdminJson(res, "导入失败");
       if (!res.ok) throw new Error(data.error || "导入失败");
@@ -3134,6 +3262,28 @@ ADMIN_HTML = r"""
         updateOAuthPanels();
       });
     });
+
+    $("accounts-table").addEventListener("dblclick", (event) => {
+      const display = event.target.closest("[data-remark-display]");
+      if (display) beginRemarkEdit(display);
+    });
+    $("accounts-table").addEventListener("keydown", (event) => {
+      const input = event.target.closest("[data-remark-input]");
+      if (!input) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        finishRemarkEdit(input).catch(() => {});
+      } else if (event.key === "Escape") {
+        const accountId = input.dataset.accountId;
+        const display = document.querySelector(`[data-remark-display][data-account-id="${accountId}"]`);
+        input.hidden = true;
+        if (display) display.hidden = false;
+      }
+    });
+    $("accounts-table").addEventListener("blur", (event) => {
+      const input = event.target.closest("[data-remark-input]");
+      if (input && !input.hidden) finishRemarkEdit(input).catch(() => {});
+    }, true);
 
     $("import-accounts-btn").addEventListener("click", async () => {
       try {
