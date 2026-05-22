@@ -773,11 +773,7 @@ ADMIN_HTML = r"""
       white-space: pre-wrap;
     }
     .activity-log-list {
-      display: grid;
-      gap: 10px;
-      max-height: 68vh;
-      overflow: auto;
-      padding-right: 4px;
+      margin: 0;
     }
     .log-toolbar {
       display: grid;
@@ -807,77 +803,6 @@ ADMIN_HTML = r"""
       margin-bottom: 10px;
       min-height: 18px;
     }
-    .log-entry {
-      border: 1px solid rgba(152, 168, 205, 0.28);
-      border-radius: 14px;
-      background: rgba(255,255,255,0.98);
-      padding: 12px 14px;
-      display: grid;
-      gap: 8px;
-    }
-    .log-entry.log-error { border-color: rgba(239, 90, 114, 0.35); background: rgba(255, 247, 249, 0.98); }
-    .log-entry.log-warn { border-color: rgba(217, 119, 6, 0.28); background: rgba(255, 251, 244, 0.98); }
-    .log-head {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: center;
-    }
-    .log-time {
-      font-family: ui-monospace, Consolas, monospace;
-      font-size: 12px;
-      color: #334155;
-      font-weight: 700;
-    }
-    .log-badge {
-      display: inline-flex;
-      align-items: center;
-      padding: 3px 8px;
-      border-radius: 999px;
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: 0.02em;
-      text-transform: uppercase;
-    }
-    .log-badge.level-info { background: rgba(79, 70, 229, 0.12); color: var(--blue); }
-    .log-badge.level-warn { background: rgba(217, 119, 6, 0.12); color: var(--amber); }
-    .log-badge.level-error { background: rgba(239, 90, 114, 0.12); color: var(--red); }
-    .log-badge.level-debug { background: rgba(100, 112, 137, 0.12); color: var(--muted); }
-    .log-badge.cat { background: rgba(15, 159, 143, 0.1); color: var(--teal); text-transform: none; }
-    .log-message {
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--text);
-      line-height: 1.45;
-    }
-    .log-meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      color: var(--muted);
-      font-size: 12px;
-      font-family: ui-monospace, Consolas, monospace;
-    }
-    .log-meta span {
-      padding: 2px 8px;
-      border-radius: 999px;
-      background: rgba(241, 245, 255, 0.95);
-      border: 1px solid rgba(152, 168, 205, 0.22);
-    }
-    .log-detail {
-      margin: 0;
-      padding: 10px 12px;
-      border-radius: 12px;
-      background: #101826;
-      color: #d7e6ff;
-      font-family: ui-monospace, Consolas, monospace;
-      font-size: 11px;
-      line-height: 1.55;
-      white-space: pre-wrap;
-      word-break: break-word;
-      max-height: 360px;
-      overflow: auto;
-    }
     .log-empty {
       padding: 28px;
       text-align: center;
@@ -885,20 +810,44 @@ ADMIN_HTML = r"""
       border: 1px dashed var(--line);
       border-radius: 14px;
       background: rgba(248, 250, 255, 0.8);
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 13px;
     }
     .activity-log-box {
+      display: block;
+      width: 100%;
       min-height: 420px;
       max-height: 70vh;
+      margin: 0;
       overflow: auto;
       padding: 14px 16px;
+      border: 1px solid rgba(152, 168, 205, 0.35);
       border-radius: 14px;
-      background: #101826;
-      color: #d7e6ff;
-      font-family: ui-monospace, Consolas, monospace;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
       font-size: 12px;
-      white-space: pre-wrap;
-      line-height: 1.6;
+      line-height: 1.55;
+      white-space: pre;
+      word-break: normal;
+      overflow-wrap: normal;
+      tab-size: 2;
     }
+    .activity-log-box:empty::before {
+      content: "暂无日志";
+      color: #64748b;
+    }
+    .activity-log-box .log-lvl-error { color: #fca5a5; }
+    .activity-log-box .log-lvl-warn { color: #fcd34d; }
+    .activity-log-box .log-lvl-info { color: #93c5fd; }
+    .activity-log-box .log-lvl-debug { color: #94a3b8; }
+    .activity-log-box .log-ts { color: #64748b; }
+    .activity-log-box .log-cat { color: #5eead4; }
+    .activity-log-box .log-act { color: #c4b5fd; }
+    .activity-log-box .log-msg { color: #f8fafc; font-weight: 600; }
+    .activity-log-box .log-meta { color: #a5b4fc; }
+    .activity-log-box .log-detail { color: #cbd5e1; }
+    .activity-log-box .log-sep { color: #334155; }
     @media (max-width: 1400px) {
       .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
       .settings-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -1112,7 +1061,7 @@ ADMIN_HTML = r"""
               <button class="button small danger" id="clear-logs-btn" type="button">清理所有日志</button>
             </div>
           </div>
-          <div class="sub">全链路结构化日志：导入、登录、额度、测试、取号、导出、OAuth、设置与异常堆栈（敏感字段已脱敏）。</div>
+          <div class="sub">终端代码风格展示：导入、登录、额度、测试、取号、导出、OAuth、设置与 detail JSON（敏感字段已脱敏）。</div>
           <div class="log-toolbar">
             <select id="log-level-filter">
               <option value="">全部级别</option>
@@ -1144,7 +1093,7 @@ ADMIN_HTML = r"""
             <label class="log-auto-refresh"><input type="checkbox" id="log-auto-refresh" checked>自动刷新</label>
           </div>
           <div class="log-meta-bar" id="log-meta-bar">加载中...</div>
-          <div class="activity-log-list" id="activity-logs"></div>
+          <pre class="activity-log-box" id="activity-logs" spellcheck="false" aria-label="运行日志代码视图"></pre>
           <div class="pagination">
             <div class="page-info" id="logs-page-info"></div>
             <div class="page-actions">
@@ -1640,7 +1589,7 @@ ADMIN_HTML = r"""
         startLogsAutoRefresh();
         loadActivityLogs().catch((error) => {
           const box = $("activity-logs");
-          if (box) box.innerHTML = `<div class="log-empty">${escapeHtml(localizeAdminError(error.message, "加载日志失败"))}</div>`;
+          if (box) box.textContent = `# ERROR: ${localizeAdminError(error.message, "加载日志失败")}\n`;
         });
       } else {
         stopLogsAutoRefresh();
@@ -1809,32 +1758,38 @@ ADMIN_HTML = r"""
       return parts.join(" | ");
     }
 
-    function renderLogEntry(row) {
-      const level = row.level || "info";
+    function renderLogEntryCode(row) {
+      const level = String(row.level || "info").toLowerCase();
+      const levelLabel = formatLogLevelLabel(level).toUpperCase().padEnd(4, " ");
+      const ts = escapeHtml(formatDisplayTime(row.createdAt, "-"));
+      const cat = escapeHtml(formatLogCategoryLabel(row.category));
+      const act = escapeHtml(row.action || "-");
+      const msg = escapeHtml(String(row.message || "-").replace(/\s+/g, " ").trim());
       const metaParts = [];
-      if (row.email) metaParts.push(`邮箱=${row.email}`);
-      if (row.accountId) metaParts.push(`账号=${row.accountId}`);
-      if (row.cardCode) metaParts.push(`卡密=${row.cardCode}`);
-      if (row.clientId) metaParts.push(`客户端=${row.clientId}`);
-      if (row.status) metaParts.push(`状态=${row.status}`);
-      if (row.durationMs != null) metaParts.push(`耗时=${row.durationMs}ms`);
-      const detailText = escapeHtml(JSON.stringify(row.detail ?? {}, null, 2));
-      return `
-        <article class="log-entry log-${escapeHtml(level)}">
-          <div class="log-head">
-            <span class="log-time">${escapeHtml(formatDisplayTime(row.createdAt, "-"))}</span>
-            <span class="log-badge level-${escapeHtml(level)}">${escapeHtml(formatLogLevelLabel(level))}</span>
-            <span class="log-badge cat">${escapeHtml(formatLogCategoryLabel(row.category))}</span>
-            <span class="log-badge cat">${escapeHtml(row.action || "-")}</span>
-          </div>
-          <div class="log-message">${escapeHtml(row.message || "-")}</div>
-          ${metaParts.length ? `<div class="log-meta">${metaParts.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
-          <details>
-            <summary>查看完整 detail（已脱敏）</summary>
-            <pre class="log-detail">${detailText}</pre>
-          </details>
-        </article>
-      `;
+      if (row.email) metaParts.push(`email=${row.email}`);
+      if (row.accountId) metaParts.push(`accountId=${row.accountId}`);
+      if (row.cardCode) metaParts.push(`cardCode=${row.cardCode}`);
+      if (row.clientId) metaParts.push(`clientId=${row.clientId}`);
+      if (row.status) metaParts.push(`status=${row.status}`);
+      if (row.durationMs != null) metaParts.push(`durationMs=${row.durationMs}`);
+      const metaLine = metaParts.length
+        ? `\n<span class="log-meta">  meta: ${escapeHtml(metaParts.join("  "))}</span>`
+        : "";
+      let detailBlock = "";
+      const detail = row.detail;
+      if (detail && typeof detail === "object" && Object.keys(detail).length) {
+        const json = escapeHtml(JSON.stringify(detail, null, 2));
+        detailBlock = `\n<span class="log-detail">  detail:\n${json.split("\n").map((line) => `    ${line}`).join("\n")}</span>`;
+      }
+      return [
+        `<span class="log-ts">[${ts}]</span> `,
+        `<span class="log-lvl-${escapeHtml(level)}">${escapeHtml(levelLabel)}</span> `,
+        `<span class="log-cat">${cat}</span>`,
+        `<span class="log-act">/${act}</span> `,
+        `<span class="log-msg">${msg}</span>`,
+        metaLine,
+        detailBlock,
+      ].join("");
     }
 
     async function loadActivityLogs({ silent = false } = {}) {
@@ -1842,7 +1797,7 @@ ADMIN_HTML = r"""
       const meta = $("log-meta-bar");
       if (!box) return;
       if (!silent) {
-        box.innerHTML = `<div class="log-empty">加载中...</div>`;
+        box.textContent = "# 加载中...\n";
         if (meta) meta.textContent = "加载中...";
       }
       const params = new URLSearchParams({
@@ -1862,9 +1817,12 @@ ADMIN_HTML = r"""
       const data = await readAdminJson(res, "加载日志失败");
       if (!res.ok) throw new Error(data.error || "加载日志失败");
       const rows = data.items || [];
-      box.innerHTML = rows.length
-        ? rows.map((row) => renderLogEntry(row)).join("")
-        : `<div class="log-empty">暂无匹配日志</div>`;
+      if (!rows.length) {
+        box.textContent = "# 暂无匹配日志\n";
+      } else {
+        const sep = '<span class="log-sep">────────────────────────────────────────────────────────────────</span>';
+        box.innerHTML = rows.map((row) => renderLogEntryCode(row)).join(`\n${sep}\n`);
+      }
       if (meta) {
         meta.textContent = `共 ${data.total || 0} 条 · 第 ${data.page || 1}/${data.totalPages || 1} 页 · 每页 ${data.pageSize || logState.pageSize} 条 · 刷新于 ${formatDisplayTime(new Date().toISOString())}`;
       }
