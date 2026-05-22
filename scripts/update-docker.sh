@@ -1,61 +1,106 @@
 #!/usr/bin/env bash
-# Docker 一键更新（容器内执行，操作宿主机项目 + docker.sock）
+# Docker 一键更新：git 同步 + 独立容器执行 compose（避免重建时杀掉本进程）
 set -u
 
 DIR="${HOST_INSTALL_DIR:-${INSTALL_DIR:-/host-codex}}"
-fail() { echo "[error] $*"; exit 1; }
+LOG="${UPDATE_LOG_FILE:-$DIR/data/update-latest.log}"
+JOB_NAME="codex-update-job"
+fail() { echo "[error] $*"; echo "[error] $*" >>"$LOG"; exit 1; }
+progress() { echo "[progress] $1|$2"; echo "[progress] $1|$2" >>"$LOG"; }
 
-echo "[update-docker] start"
-echo "[update-docker] DIR=$DIR"
+mkdir -p "$(dirname "$LOG")" "$DIR/data/backups"
+: >"$LOG"
+progress 2 "开始更新"
+
+echo "[update-docker] DIR=$DIR" | tee -a "$LOG"
 
 if [[ ! -d "$DIR" ]]; then
-  fail "项目目录不存在: $DIR。请重建容器并挂载 .:/host-codex（见 docker-compose.yml）"
+  fail "项目目录不存在: $DIR（需挂载 .:/host-codex）"
 fi
 if [[ ! -d "$DIR/.git" ]]; then
   fail "不是 git 仓库: $DIR"
 fi
 if [[ ! -S /var/run/docker.sock ]]; then
-  fail "未挂载 /var/run/docker.sock，无法重建容器"
+  fail "未挂载 /var/run/docker.sock"
 fi
 if [[ ! -f "$DIR/docker-compose.yml" ]]; then
-  fail "缺少 docker-compose.yml: $DIR"
+  fail "缺少 docker-compose.yml"
 fi
 
 cd "$DIR" || fail "无法进入 $DIR"
 
-mkdir -p data/backups
 if [[ -f data/card_system.db ]]; then
   cp -f data/card_system.db "data/backups/pre-update-$(date +%Y%m%d-%H%M).db" || true
-  echo "[ok] db backup"
+  progress 8 "数据库已备份"
 fi
 
+progress 12 "正在从 GitHub 拉取代码"
 git config --global --add safe.directory "$DIR" 2>/dev/null || true
-if ! git fetch origin main 2>&1; then
-  fail "git fetch 失败，请检查服务器能否访问 GitHub"
+if ! git fetch origin main >>"$LOG" 2>&1; then
+  fail "git fetch 失败（请检查服务器能否访问 GitHub）"
 fi
-if ! git reset --hard FETCH_HEAD 2>&1; then
+if ! git reset --hard FETCH_HEAD >>"$LOG" 2>&1; then
   fail "git reset 失败"
 fi
-echo "[ok] code $(head -1 VERSION 2>/dev/null || echo ?)"
+VER="$(head -1 VERSION 2>/dev/null || echo ?)"
+progress 45 "代码已同步到 v${VER}"
+echo "[ok] code $VER" >>"$LOG"
 
 export DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"
-
-DC=""
-if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-  DC="docker compose"
-elif [[ -x /usr/local/bin/docker-compose ]] && /usr/local/bin/docker-compose version >/dev/null 2>&1; then
-  DC="/usr/local/bin/docker-compose"
-elif command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
-  DC="docker-compose"
+COMPOSE_BIN=""
+if [[ -x /usr/local/bin/docker-compose ]]; then
+  COMPOSE_BIN="/usr/local/bin/docker-compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE_BIN="$(command -v docker-compose)"
 fi
-if [[ -z "$DC" ]]; then
-  fail "未找到 docker compose（需重建镜像或挂载 docker.sock）"
+if [[ -z "$COMPOSE_BIN" ]]; then
+  fail "未找到 docker-compose（请重建镜像）"
 fi
 
-echo "[ok] using $DC"
-if ! $DC -f "$DIR/docker-compose.yml" up -d --build; then
-  fail "docker compose up 失败"
+docker rm -f "$JOB_NAME" >>"$LOG" 2>&1 || true
+progress 52 "正在提交容器重建（主服务会短暂断开，请稍候）"
+echo "[ok] compose bin=$COMPOSE_BIN" >>"$LOG"
+
+if ! docker run -d --name "$JOB_NAME" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$DIR:/work" \
+  -v "$COMPOSE_BIN:/usr/local/bin/docker-compose:ro" \
+  -w /work \
+  -e DOCKER_HOST=unix:///var/run/docker.sock \
+  docker:26-cli \
+  sh -c '
+    set -u
+    echo "[progress] 60|Docker 正在 build / 启动" >> /work/data/update-latest.log
+    if /usr/local/bin/docker-compose -f /work/docker-compose.yml up -d --build >> /work/data/update-latest.log 2>&1; then
+      echo "[progress] 95|容器已启动" >> /work/data/update-latest.log
+      echo "[done] ok" >> /work/data/update-latest.log
+      exit 0
+    fi
+    echo "[error] docker compose up 失败" >> /work/data/update-latest.log
+    exit 1
+  ' >>"$LOG" 2>&1; then
+  fail "无法启动重建任务容器（可能无法拉取 docker:26-cli 镜像）"
 fi
 
-echo "[ok] container restarted"
-echo "[done]"
+progress 58 "重建任务已提交，等待新容器就绪…"
+echo "[ok] job $JOB_NAME started" >>"$LOG"
+
+# 轮询 sidecar 日志直到结束或超时（本脚本在旧容器内，可能中途被杀）
+deadline=$((SECONDS + 540))
+while (( SECONDS < deadline )); do
+  if ! docker ps -q -f "name=^${JOB_NAME}$" | grep -q .; then
+    if grep -q '\[done\]' "$LOG" 2>/dev/null; then
+      progress 100 "更新完成"
+      echo "[done] finished" >>"$LOG"
+      exit 0
+    fi
+    if grep -q '\[error\]' "$LOG" 2>/dev/null; then
+      fail "重建失败（见日志）"
+    fi
+    sleep 2
+    continue
+  fi
+  sleep 3
+done
+
+fail "等待重建超时（9 分钟），请 SSH 查看 docker logs / data/update-latest.log"

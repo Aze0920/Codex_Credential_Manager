@@ -487,9 +487,32 @@ ADMIN_HTML = r"""
       font-size: 13px;
       color: #64748b;
     }
+    .version-progress-wrap {
+      margin-top: 12px;
+      display: grid;
+      gap: 6px;
+    }
+    .version-progress-track {
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(167, 183, 214, 0.35);
+      overflow: hidden;
+    }
+    .version-progress-bar {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--blue), #22c7b8);
+      transition: width 0.35s ease;
+    }
+    .version-progress-label {
+      margin: 0;
+      font-size: 13px;
+      color: #64748b;
+    }
     .version-log {
       margin: 0;
-      max-height: 180px;
+      max-height: 220px;
       overflow: auto;
       padding: 10px 12px;
       border-radius: 12px;
@@ -498,6 +521,7 @@ ADMIN_HTML = r"""
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 12px;
       white-space: pre-wrap;
+      line-height: 1.45;
     }
     .button.primary.danger-fill {
       background: linear-gradient(135deg, #f05279, var(--red));
@@ -1135,6 +1159,7 @@ ADMIN_HTML = r"""
             <h4>版本与更新</h4>
             <p class="about-version-line">当前版本：<strong id="about-app-version">加载中…</strong>　右上角「v」按钮可检查 GitHub 更新并一键拉取部署。</p>
             <ul class="about-changelog" id="about-changelog">
+              <li><span class="ver">v1.0.19</span> — 一键更新：进度条 + 详细日志；独立容器重建，修复误报「操作失败」。</li>
               <li><span class="ver">v1.0.18</span> — 修复版本检测：只读 GitHub main/VERSION，避免 CDN/旧 Release 误报已是最新。</li>
               <li><span class="ver">v1.0.17</span> — 关于页增加「版本与更新」说明；版本弹窗界面精简。</li>
               <li><span class="ver">v1.0.16</span> — 版本号与更新说明整理。</li>
@@ -1419,7 +1444,9 @@ ADMIN_HTML = r"""
 
     function showToast(message = "已刷新", type = "success", durationMs = 1500) {
       const toast = $("toast");
-      toast.textContent = type === "error" ? localizeAdminError(message) : String(message || "");
+      const rawMsg = String(message || "");
+      const skipLocalize = /更新|日志|docker|git|compose/i.test(rawMsg);
+      toast.textContent = type === "error" && !skipLocalize ? localizeAdminError(rawMsg) : rawMsg;
       toast.classList.remove("success", "error", "show");
       toast.classList.add(type === "error" ? "error" : "success", "show");
       if (toastTimer) clearTimeout(toastTimer);
@@ -2730,6 +2757,10 @@ ADMIN_HTML = r"""
         `<button class="button" type="button" id="version-backup-btn">备份数据库</button>`,
         updateBtnHtml,
         `</div>`,
+        `<div class="version-progress-wrap" id="version-progress-wrap" hidden>`,
+        `  <div class="version-progress-track"><div class="version-progress-bar" id="version-progress-bar"></div></div>`,
+        `  <p class="version-progress-label" id="version-progress-label"></p>`,
+        `</div>`,
         `<pre class="version-log" id="version-update-log" hidden></pre>`,
       ].join("");
       $("version-modal-body").innerHTML = bodyHtml;
@@ -2778,6 +2809,70 @@ ADMIN_HTML = r"""
       }
     }
 
+    let updatePollTimer = null;
+
+    function setUpdateProgress(percent, label) {
+      const wrap = $("version-progress-wrap");
+      const bar = $("version-progress-bar");
+      const text = $("version-progress-label");
+      if (wrap) wrap.hidden = false;
+      if (bar) bar.style.width = `${Math.max(0, Math.min(100, Number(percent) || 0))}%`;
+      if (text) text.textContent = label || "";
+    }
+
+    function stopUpdatePoll() {
+      if (updatePollTimer) {
+        clearInterval(updatePollTimer);
+        updatePollTimer = null;
+      }
+    }
+
+    function renderUpdateStatus(data) {
+      const logEl = $("version-update-log");
+      setUpdateProgress(data.progress ?? 0, data.message || "更新中…");
+      if (logEl) {
+        logEl.hidden = false;
+        logEl.textContent = data.log || logEl.textContent || "";
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+    }
+
+    async function pollUpdateStatus({ maxRounds = 200 } = {}) {
+      let rounds = 0;
+      stopUpdatePoll();
+      return new Promise((resolve, reject) => {
+        const tick = async () => {
+          rounds += 1;
+          try {
+            const res = await adminFetch("/api/admin/update/status");
+            const data = await readAdminJson(res, "读取更新状态失败");
+            renderUpdateStatus(data);
+            if (data.state === "success") {
+              stopUpdatePoll();
+              resolve(data);
+              return;
+            }
+            if (data.state === "failed") {
+              stopUpdatePoll();
+              reject(new Error(data.error || "更新失败，请查看下方日志"));
+              return;
+            }
+            if (rounds >= maxRounds) {
+              stopUpdatePoll();
+              reject(new Error("更新超时，请 SSH 查看 data/update-latest.log"));
+            }
+          } catch (error) {
+            if (rounds >= maxRounds) {
+              stopUpdatePoll();
+              reject(error);
+            }
+          }
+        };
+        updatePollTimer = setInterval(() => tick().catch(() => {}), 1500);
+        tick().catch(() => {});
+      });
+    }
+
     async function runSelfUpdate() {
       if (!versionInfoCache?.updateAvailable) {
         showToast(versionInfoCache?.upToDate ? "已是最新，无需更新" : "当前无法更新", "error");
@@ -2788,31 +2883,40 @@ ADMIN_HTML = r"""
         return;
       }
       const updateBtn = $("version-update-btn");
+      const logEl = $("version-update-log");
       if (updateBtn) {
         updateBtn.disabled = true;
         updateBtn.textContent = "更新中…";
       }
-      const logEl = $("version-update-log");
       if (logEl) {
         logEl.hidden = false;
-        logEl.textContent = "更新中，请稍候（完成后服务可能短暂断开）…";
+        logEl.textContent = "";
       }
+      setUpdateProgress(0, "正在启动更新任务…");
       try {
         const res = await adminFetch("/api/admin/update/run", { method: "POST", body: "{}" });
-        const data = await res.json();
-        const text = [data.stdout, data.stderr].filter(Boolean).join("\n").trim();
-        if (logEl) logEl.textContent = text || (data.error || (data.ok ? "更新完成" : "更新失败"));
+        const data = await readAdminJson(res, "启动更新失败");
         if (!res.ok || !data.ok) {
-          const msg = data.error || text.split("\n").filter(Boolean).pop() || "更新失败";
-          throw new Error(msg);
+          throw new Error(data.error || "无法启动更新");
         }
-        showToast("更新完成，如页面无响应请刷新", "success");
+        showToast(data.alreadyRunning ? "更新任务进行中" : "更新已开始", "success", 2000);
+        const final = await pollUpdateStatus();
+        if (logEl && final.log) logEl.textContent = final.log;
+        setUpdateProgress(100, "更新完成");
+        showToast("更新完成，如页面无响应请 Ctrl+F5 刷新", "success", 4000);
         setTimeout(() => {
           loadVersionBadge().catch(() => {});
           refreshVersionModal(false).catch(() => {});
-        }, 3000);
+        }, 2500);
       } catch (error) {
-        showToast(error.message || "更新失败", "error");
+        const msg = String(error?.message || "更新失败");
+        showToast(msg, "error", 8000);
+        if (logEl && !logEl.textContent.trim()) {
+          logEl.textContent = msg + "\n\n（若服务已断开，请刷新页面后查看 data/update-latest.log）";
+        }
+        setUpdateProgress(0, "更新失败");
+      } finally {
+        stopUpdatePoll();
         if (updateBtn) {
           updateBtn.disabled = false;
           updateBtn.textContent = "一键更新";

@@ -90,6 +90,7 @@ from core.api_gateway import (
 )
 from core.activity_logger import clear_all_activity_logs, log_activity, log_exception, list_activity_logs
 from core.app_version import build_version_payload, get_app_version, get_host_install_dir
+from core.update_job import get_update_status, start_update_job
 from core.db_config import create_database_backup, get_database_path, list_database_backups
 from core.proxy_tester import test_proxy_pool
 from tools.admin_panel_html import ADMIN_HTML
@@ -2585,49 +2586,25 @@ def admin_update_run():
     if not readiness.get("ready"):
         issues = readiness.get("issues") or []
         return jsonify({"ok": False, "error": "；".join(issues) or "环境未就绪"}), 400
-    script = Path(str(meta.get("updateScript") or "")).resolve()
-    if not script.is_file():
-        return jsonify({"ok": False, "error": f"更新脚本不存在: {script}"}), 404
-    install_dir = str(readiness.get("installDir") or get_host_install_dir())
     log_activity(
         category="admin",
         action="update.start",
-        message="开始执行一键更新",
+        message="开始执行一键更新（后台任务）",
         status="running",
-        detail={"script": str(script)},
+        detail={"script": str(meta.get("updateScript") or "")},
     )
-    try:
-        result = subprocess.run(
-            ["bash", str(script)],
-            cwd=install_dir,
-            capture_output=True,
-            text=True,
-            timeout=600,
-            env={**os.environ, "INSTALL_DIR": install_dir, "HOST_INSTALL_DIR": install_dir},
-        )
-    except subprocess.TimeoutExpired:
-        return jsonify({"ok": False, "error": "更新超时（10 分钟）"}), 504
-    except OSError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
-    ok = result.returncode == 0
-    log_activity(
-        category="admin",
-        action="update.finish",
-        message="一键更新完成" if ok else "一键更新失败",
-        status="success" if ok else "failed",
-        detail={"exitCode": result.returncode},
-    )
-    detail = (result.stderr or "").strip() or (result.stdout or "").strip()
-    err_msg = detail.splitlines()[-1] if detail else f"退出码 {result.returncode}"
-    return jsonify(
-        {
-            "ok": ok,
-            "exitCode": result.returncode,
-            "error": None if ok else err_msg,
-            "stdout": (result.stdout or "")[-8000:],
-            "stderr": (result.stderr or "")[-4000:],
-        }
-    )
+    result = start_update_job()
+    if not result.get("ok"):
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@app.get("/api/admin/update/status")
+def admin_update_status():
+    denied = admin_required()
+    if denied:
+        return denied
+    return jsonify(get_update_status())
 
 
 @app.get("/api/admin/cards")
