@@ -23,8 +23,8 @@ COPY config ./config
 COPY core ./core
 COPY sentinel ./sentinel
 COPY tools ./tools
-COPY scripts/update-docker.sh scripts/docker-entrypoint.sh ./scripts/
-RUN chmod +x /app/scripts/update-docker.sh /app/scripts/docker-entrypoint.sh
+COPY scripts ./scripts/
+RUN chmod +x /app/scripts/*.sh /app/scripts/trigger-update.py 2>/dev/null || true
 COPY run.sh ./
 
 RUN mkdir -p /app/data

@@ -24,7 +24,7 @@ services:
       # 勿单独挂载 VERSION 文件（宿主机若误建成目录会导致 compose 启动失败）；由 entrypoint 从 /host-codex/VERSION 同步
       - ./core:/app/core:ro
       - ./tools:/app/tools:ro
-      - ./scripts:/app/scripts:ro
+      # 勿挂载 ./scripts 到 /app/scripts，会覆盖镜像内 entrypoint 导致容器 Restarting(2)
       - .:/host-codex
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:

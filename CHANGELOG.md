@@ -2,6 +2,18 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.38] - 2026-05-22
+
+### 修复
+
+- 移除 `docker-compose` 对 `./scripts:/app/scripts` 的挂载（覆盖 entrypoint 导致 Web 容器 `Restarting (2)`）；启动脚本改由镜像内提供，更新仍用 `/host-codex/scripts`。
+
+## [1.0.37] - 2026-05-22
+
+### 修复
+
+- 更新脚本 `git reset` 改用 `FETCH_HEAD`（与服务器手动拉代码方式一致，避免卡在旧提交）。
+
 ## [1.0.36] - 2026-05-22
 
 ### 修复

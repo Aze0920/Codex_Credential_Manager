@@ -67,7 +67,7 @@ log "[git] fetch origin main"
 if ! git fetch origin main >>"$LOG" 2>&1; then
   fail "git fetch 失败，请查看日志"
 fi
-if ! git reset --hard origin/main >>"$LOG" 2>&1; then
+if ! git reset --hard FETCH_HEAD >>"$LOG" 2>&1; then
   fail "git reset 失败"
 fi
 VER="$(head -1 VERSION 2>/dev/null || echo ?)"
