@@ -2,6 +2,13 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.24] - 2026-05-22
+
+### 修复
+
+- 容器启动改为 `sh docker-entrypoint.sh`，避免挂载脚本无执行位导致 `permission denied`。
+- 取消 `./scripts` 覆盖 `/app/scripts`，更新脚本仍从 `/host-codex/scripts` 读取。
+
 ## [1.0.23] - 2026-05-22
 
 ### 修复

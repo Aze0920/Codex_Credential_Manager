@@ -4,6 +4,7 @@ services:
   codex-web:
     build: .
     container_name: codex-credential-manager
+    command: ["sh", "/app/scripts/docker-entrypoint.sh"]
     restart: unless-stopped
     ports:
       - "${PORT:-8766}:8766"
@@ -22,7 +23,6 @@ services:
       - ./VERSION:/app/VERSION
       - ./core:/app/core:ro
       - ./tools:/app/tools:ro
-      - ./scripts:/app/scripts:ro
       - .:/host-codex
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
