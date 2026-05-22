@@ -68,6 +68,7 @@ from core.card_store import (
     reauthorize_pool_account,
     update_pool_account_proxy,
     update_pool_account_remark,
+    set_pool_account_priority_sale,
     test_pool_account,
 )
 from core.openai_oauth import generate_auth_url
@@ -2861,6 +2862,27 @@ def admin_import_accounts():
     except Exception as exc:
         return api_error_response(exc)
     return jsonify({**result, "stats": get_stats()})
+
+
+@app.post("/api/admin/accounts/priority-sale")
+def admin_set_account_priority_sale():
+    denied = admin_required()
+    if denied:
+        return denied
+    payload = get_request_payload()
+    try:
+        account_id = str(payload.get("accountId") or payload.get("id") or "").strip()
+        enabled = payload.get("enabled")
+        if enabled is None:
+            enabled = payload.get("prioritySale")
+        if isinstance(enabled, str):
+            enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            enabled = bool(enabled)
+        result = set_pool_account_priority_sale(account_id, enabled=enabled)
+    except Exception as exc:
+        return api_error_response(exc)
+    return jsonify(result)
 
 
 @app.post("/api/admin/accounts/remark")

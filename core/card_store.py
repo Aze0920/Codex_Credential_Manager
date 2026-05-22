@@ -154,6 +154,8 @@ def _migrate_pool_accounts(conn: sqlite3.Connection) -> None:
         ("mailbox_material", "TEXT NOT NULL DEFAULT ''"),
         ("pool_type", "TEXT NOT NULL DEFAULT 'pp'"),
         ("remark", "TEXT NOT NULL DEFAULT ''"),
+        ("priority_sale", "INTEGER NOT NULL DEFAULT 0"),
+        ("priority_sale_at", "TEXT"),
     )
     for name, typedef in migrations:
         if name not in columns:
@@ -1445,6 +1447,53 @@ def update_pool_account_remark(account_id: str, remark: str | None) -> dict[str,
     return {"ok": True, "accountId": account_id, "remark": text}
 
 
+def set_pool_account_priority_sale(account_id: str, *, enabled: bool) -> dict[str, Any]:
+    account_id = str(account_id or "").strip()
+    if not account_id:
+        raise ValueError("缺少 accountId")
+    now = now_iso()
+    with LOCK:
+        conn = _connect()
+        try:
+            row = conn.execute(
+                "SELECT id, email, status FROM pool_accounts WHERE id = ?",
+                (account_id,),
+            ).fetchone()
+            if not row:
+                raise ValueError("账号不存在")
+            if (row["status"] or "").strip().lower() == "assigned":
+                raise ValueError("账号已分配，无法设置优先出售")
+            if enabled:
+                conn.execute(
+                    "UPDATE pool_accounts SET priority_sale = 1, priority_sale_at = ? WHERE id = ?",
+                    (now, account_id),
+                )
+                at = now
+            else:
+                conn.execute(
+                    "UPDATE pool_accounts SET priority_sale = 0, priority_sale_at = NULL WHERE id = ?",
+                    (account_id,),
+                )
+                at = None
+            conn.commit()
+            email = str(row["email"])
+        finally:
+            conn.close()
+    log_activity(
+        category="admin",
+        action="account.priority_sale",
+        message=f"{'开启' if enabled else '关闭'}优先出售: {email}",
+        status="success",
+        detail={"accountId": account_id, "enabled": enabled, "prioritySaleAt": at},
+    )
+    return {
+        "ok": True,
+        "accountId": account_id,
+        "prioritySale": enabled,
+        "prioritySaleAt": at,
+    }
+
+
 def update_account_test(account_id: str, *, status: str, result: dict[str, Any]) -> None:
     with LOCK:
         conn = _connect()
@@ -2059,7 +2108,9 @@ def redeem_card(code: str) -> dict[str, Any]:
                            account_type, oauth_data
                     FROM pool_accounts
                     WHERE status = 'available' AND test_status = 'success' AND pool_type = ?
-                    ORDER BY created_at ASC
+                    ORDER BY priority_sale DESC,
+                             CASE WHEN coalesce(priority_sale, 0) = 1 THEN priority_sale_at ELSE NULL END ASC,
+                             created_at ASC
                     LIMIT 1
                     """,
                     (card_pool,),
@@ -2284,7 +2335,8 @@ def list_accounts_page(
                 SELECT id, email, status, card_code, created_at, assigned_at,
                        account_type, group_name, oauth_data, test_status, test_result, last_test_at,
                        quota_data, quota_updated_at, assigned_proxy, mailbox_material,
-                       client_id, refresh_token, material, pool_type, remark
+                       client_id, refresh_token, material, pool_type, remark,
+                       priority_sale, priority_sale_at
                 FROM pool_accounts
                 {where_sql}
                 ORDER BY group_name ASC, created_at DESC
@@ -2318,6 +2370,8 @@ def list_accounts_page(
                         "hasRefreshToken": account_has_chatgpt_refresh_token(row),
                         "hasMailbox": account_has_mailbox(row),
                         "remark": str(row["remark"] or "").strip() if "remark" in row.keys() else "",
+                        "prioritySale": bool(row["priority_sale"]) if "priority_sale" in row.keys() else False,
+                        "prioritySaleAt": row["priority_sale_at"] if "priority_sale_at" in row.keys() else None,
                     }
                 )
             return {

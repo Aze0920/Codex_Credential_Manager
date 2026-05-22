@@ -676,6 +676,12 @@ ADMIN_HTML = r"""
       border: 1px solid var(--blue);
       font-size: 14px;
     }
+    .button.priority-sale-btn.is-on {
+      color: #fff;
+      border-color: transparent;
+      background: linear-gradient(135deg, #f59e0b, #ea580c);
+      box-shadow: 0 8px 18px rgba(234, 88, 12, 0.28);
+    }
     .test-panel {
       padding: 14px;
       border-radius: 16px;
@@ -2044,6 +2050,7 @@ ADMIN_HTML = r"""
             ${accountCanReadMailbox(row) ? `<button class="button inline-read-mailbox-btn${mailboxBusyAccountId === row.id ? " is-busy" : ""}" data-account-id="${row.id}" ${mailboxBusyAccountId === row.id ? "disabled" : ""}>${mailboxBusyAccountId === row.id ? "读取中" : "读取邮箱"}</button>` : ""}
             ${accountCanOAuthAuthorize(row) ? `<button class="button inline-open-oauth-btn" data-account-id="${row.id}">OAuth授权</button>` : ""}
             ${accountNeedsReauth(row) ? `<button class="button danger inline-open-reauth-btn" data-account-id="${row.id}">重新授权</button>` : ""}
+            <button class="button priority-sale-btn inline-priority-sale-btn${row.prioritySale ? " is-on" : ""}" type="button" data-account-id="${row.id}" data-priority-sale="${row.prioritySale ? "1" : "0"}" title="${row.prioritySale ? "已优先：下次取号优先分配此账号（按开启时间排序）" : "开启后，下次用户取号将优先分配此账号"}">${row.prioritySale ? "已优先出售" : "优先出售"}</button>
             <button class="button inline-close-test-btn" data-account-id="${row.id}">关闭</button>
           </div>
           ${mailboxOpenAccountId === row.id ? buildMailboxPanel(row) : ""}
@@ -2478,6 +2485,27 @@ ADMIN_HTML = r"""
 
     function currentImportRemark() {
       return ($("import-remark")?.value || "").trim();
+    }
+
+    async function toggleAccountPrioritySale(accountId, enable) {
+      const res = await adminFetch("/api/admin/accounts/priority-sale", {
+        method: "POST",
+        body: JSON.stringify({ accountId, enabled: enable }),
+      });
+      const data = await readAdminJson(res, "设置优先出售失败");
+      if (!res.ok) throw new Error(data.error || "设置优先出售失败");
+      const on = !!data.prioritySale;
+      for (const row of listState.lastAccounts || []) {
+        if (row.id === accountId) {
+          row.prioritySale = on;
+          row.prioritySaleAt = data.prioritySaleAt || null;
+        }
+      }
+      if (testingAccount && testingAccount.id === accountId) {
+        testingAccount.prioritySale = on;
+        testingAccount.prioritySaleAt = data.prioritySaleAt || null;
+      }
+      return data;
     }
 
     async function saveAccountRemark(accountId, remark) {
@@ -3649,6 +3677,18 @@ ADMIN_HTML = r"""
 
       const accountId = target.dataset.accountId;
       if (accountId) {
+        if (target.classList.contains("inline-priority-sale-btn")) {
+          const currentlyOn = target.dataset.prioritySale === "1";
+          try {
+            await toggleAccountPrioritySale(accountId, !currentlyOn);
+            showToast(currentlyOn ? "已取消优先出售" : "已设为优先出售，下次取号优先", "success");
+            renderAccounts({ items: listState.lastAccounts || [], ...(listState.accountsMeta || {}) });
+          } catch (error) {
+            showToast(error.message || "操作失败", "error");
+          }
+          return;
+        }
+
         if (target.classList.contains("inline-close-test-btn")) {
           testingAccount = null;
           reauthOpenAccountId = "";
