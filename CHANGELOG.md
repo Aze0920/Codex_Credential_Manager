@@ -2,6 +2,13 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.32] - 2026-05-22
+
+### 修复
+
+- 更新流程改为 **先 `compose build`（旧服务不停）再 `up --force-recreate`**，去掉 `compose down`，大幅缩短 502 空窗（502 主要只在切换容器的几十秒）。
+- 更新等待 UI 显示已等待秒数，并区分「构建中 / 切换中」提示。
+
 ## [1.0.31] - 2026-05-22
 
 ### 文档 / 界面

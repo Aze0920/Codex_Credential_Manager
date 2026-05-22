@@ -2967,6 +2967,7 @@ ADMIN_HTML = r"""
     }
 
     let updatePollTimer = null;
+    let updateWaitStartedAt = 0;
 
     function setUpdateProgress(percent, label) {
       const wrap = $("version-progress-wrap");
@@ -2994,22 +2995,27 @@ ADMIN_HTML = r"""
       }
     }
 
-    async function waitServiceHealth({ maxAttempts = 90, intervalMs = 2000 } = {}) {
+    function updateWaitElapsedLabel(base) {
+      const sec = updateWaitStartedAt ? Math.floor((Date.now() - updateWaitStartedAt) / 1000) : 0;
+      return `${base}（已等待 ${sec} 秒，502 为重建正常现象，请勿刷新）`;
+    }
+
+    async function waitServiceHealth({ maxAttempts = 45, intervalMs = 2000 } = {}) {
       for (let i = 0; i < maxAttempts; i += 1) {
         try {
           const res = await fetch("/api/admin/health");
           const data = await readAdminJson(res, "健康检查失败");
           if (res.ok && data.ok) return data;
         } catch (_) {
-          /* 重建期间 502/连接失败属正常 */
+          /* 切换容器瞬间 502 属正常 */
         }
         setUpdateProgress(
-          Math.min(99, 92 + Math.floor((i / maxAttempts) * 7)),
-          `服务重启中，请稍候…（${i + 1}/${maxAttempts}，期间可能 502）`
+          Math.min(99, 93 + Math.floor((i / maxAttempts) * 6)),
+          updateWaitElapsedLabel("新容器已启动，等待页面恢复")
         );
         await new Promise((r) => setTimeout(r, intervalMs));
       }
-      throw new Error("服务启动超时，请 SSH 执行: docker compose -p codex ps && docker compose -p codex logs --tail 30");
+      throw new Error("页面恢复超时；更新可能已成功，请刷新或 SSH: docker compose -p codex ps");
     }
 
     async function pollUpdateStatus({ maxRounds = 400 } = {}) {
@@ -3040,9 +3046,14 @@ ADMIN_HTML = r"""
             }
           } catch (error) {
             networkErrors += 1;
+            const phase = networkErrors < 4
+              ? "独立更新容器执行中"
+              : (networkErrors < 20
+                ? "正在构建/切换 Docker（502 正常，旧版已下线）"
+                : "构建较慢，请继续等待（勿刷新）");
             setUpdateProgress(
-              Math.min(95, 55 + networkErrors),
-              `服务重启中（暂时无法连接，502 正常）… 请勿刷新关闭`
+              Math.min(95, 55 + Math.min(35, networkErrors)),
+              updateWaitElapsedLabel(phase)
             );
             if (rounds >= maxRounds) {
               stopUpdatePoll();
@@ -3074,6 +3085,7 @@ ADMIN_HTML = r"""
         logEl.hidden = false;
         logEl.textContent = "";
       }
+      updateWaitStartedAt = Date.now();
       setUpdateProgress(0, "正在启动独立更新容器（不会在本容器内执行更新）…");
       try {
         const res = await adminFetch("/api/admin/update/run", { method: "POST", body: "{}" });
@@ -3081,10 +3093,16 @@ ADMIN_HTML = r"""
         if (!res.ok || !data.ok) {
           throw new Error(data.error || "无法启动更新");
         }
-        showToast(data.alreadyRunning ? "更新任务进行中" : "更新已开始", "success", 2000);
+        showToast(
+          data.alreadyRunning
+            ? "更新任务进行中"
+            : "更新已开始：先后台构建（无 502），切换时短暂 502 正常",
+          "success",
+          5000
+        );
         const final = await pollUpdateStatus();
         if (logEl && final.log) logEl.textContent = final.log;
-        setUpdateProgress(96, "更新完成，等待服务恢复…");
+        setUpdateProgress(96, updateWaitElapsedLabel("更新任务完成，确认页面可访问"));
         await waitServiceHealth();
         setUpdateProgress(100, "更新完成");
         showToast("更新完成，页面已恢复", "success", 4000);
