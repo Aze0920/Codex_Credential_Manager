@@ -3081,7 +3081,16 @@ def admin_login_account():
         force = payload.get("force", True)
         if isinstance(force, str):
             force = force.strip().lower() not in {"0", "false", "no"}
-        data = login_pool_account(account_id, force=bool(force))
+        auto_follow = payload.get("autoFollowUp", True)
+        if isinstance(auto_follow, str):
+            auto_follow = auto_follow.strip().lower() not in {"0", "false", "no"}
+        data = login_pool_account(
+            account_id,
+            force=bool(force),
+            auto_follow_up=bool(auto_follow),
+            model=str(payload.get("model") or "").strip() or None,
+            message=str(payload.get("message") or "").strip() or None,
+        )
     except Exception as exc:
         return api_error_response(exc)
     return jsonify(data)

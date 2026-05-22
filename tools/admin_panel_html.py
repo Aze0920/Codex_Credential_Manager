@@ -1292,15 +1292,30 @@ ADMIN_HTML = r"""
     const SAVED_PASSWORD_KEY = "gpt-admin-saved-password";
     const ACCOUNT_GROUP_KEY = "gpt-admin-account-group";
     const CARD_POOL_KEY = "gpt-admin-card-pool";
+    const CARDS_PAGE_SIZE_KEY = "gpt-admin-cards-page-size";
+    const ACCOUNTS_PAGE_SIZE_KEY = "gpt-admin-accounts-page-size";
     const EXPANDED_ACCOUNT_KEY = "gpt-admin-expanded-account";
     const VALID_TABS = ["accounts-pp", "accounts-go", "cards", "logs", "settings", "about"];
     const ACCOUNT_TABS = ["accounts-pp", "accounts-go"];
     const POOL_LABELS = { pp: "PP", go: "GO" };
     let accountPollTimer = null;
     const PAGE_SIZE_OPTIONS = [10, 50, 100, 500, 1000, 5000];
+    function readStoredPageSize(key, fallback = 10) {
+      const raw = Number(localStorage.getItem(key));
+      return PAGE_SIZE_OPTIONS.includes(raw) ? raw : fallback;
+    }
     const listState = {
-      cards: { page: 1, pageSize: 10, poolType: localStorage.getItem(CARD_POOL_KEY) || "pp" },
-      accounts: { page: 1, pageSize: 10, group: localStorage.getItem(ACCOUNT_GROUP_KEY) || "all", poolType: "pp" },
+      cards: {
+        page: 1,
+        pageSize: readStoredPageSize(CARDS_PAGE_SIZE_KEY),
+        poolType: localStorage.getItem(CARD_POOL_KEY) || "pp",
+      },
+      accounts: {
+        page: 1,
+        pageSize: readStoredPageSize(ACCOUNTS_PAGE_SIZE_KEY),
+        group: localStorage.getItem(ACCOUNT_GROUP_KEY) || "all",
+        poolType: "pp",
+      },
     };
     let toastTimer = null;
     let confirmResolver = null;
@@ -2694,33 +2709,56 @@ ADMIN_HTML = r"""
       const lines = [
         "重新登录成功（已校验额度）",
         `方式: ${formatLoginMode(data.loginMode)}`,
-        `耗时: ${data.loginMs ?? "-"}ms`,
+        `登录耗时: ${data.loginMs ?? "-"}ms`,
         `代理: ${data.proxyLabel || "-"}`,
       ];
       if (data.proxyAssigned) lines.push("已从代理池自动绑定代理");
       if (data.quotaSummary) lines.push(`额度: ${data.quotaSummary}`);
+      if (data.quota) {
+        lines.push("");
+        lines.push("额度详情:");
+        lines.push(formatQuotaResult(data.quota));
+      }
+      if (data.test) {
+        lines.push("");
+        lines.push("自动测试结果:");
+        lines.push(formatTestResult(data.test, { includeQuota: false }));
+      }
       return lines.join("\n");
     }
 
     async function runAccountLogin(accountId) {
       const resultBox = document.querySelector(`.inline-test-result[data-account-id="${accountId}"]`);
-      if (resultBox) resultBox.textContent = "登录中，请稍候（邮箱账号可能需要读取验证码）…";
+      const model = document.querySelector(`.inline-test-model[data-account-id="${accountId}"]`)?.value;
+      const message = document.querySelector(`.inline-test-message[data-account-id="${accountId}"]`)?.value;
+      if (resultBox) {
+        resultBox.textContent = "重新登录中（完整流程）…\n登录成功后将自动查询额度并测试模型";
+      }
       const res = await adminFetch("/api/admin/accounts/login", {
         method: "POST",
-        body: JSON.stringify({ accountId, force: true }),
+        body: JSON.stringify({
+          accountId,
+          force: true,
+          autoFollowUp: true,
+          model,
+          message: message || "hi",
+        }),
       });
-      const data = await readAdminJson(res, "登录失败");
+      const data = await readAdminJson(res, "重新登录失败");
       if (!res.ok) {
-        const err = new Error(data.detail || data.error || "登录失败");
+        const err = new Error(data.detail || data.error || "重新登录失败");
         err.apiData = data;
         throw err;
       }
       if (resultBox) resultBox.textContent = formatLoginResult(data);
       await loadAccounts();
+      const testOk = data.testOk ?? (String(data.testStatus || "").toLowerCase() === "success");
       showToast(
-        `重新登录成功${data.proxyAssigned ? "（已自动绑定代理）" : ""}：${formatLoginMode(data.loginMode)}`,
-        "success",
-        3500,
+        testOk
+          ? `重新登录并测试通过（${formatLoginMode(data.loginMode)}）`
+          : `重新登录成功，但自动测试未通过`,
+        testOk ? "success" : "error",
+        4500,
       );
       return data;
     }
@@ -3632,12 +3670,14 @@ ADMIN_HTML = r"""
 
     $("cards-page-size").addEventListener("change", async (event) => {
       listState.cards.pageSize = Number(event.target.value);
+      localStorage.setItem(CARDS_PAGE_SIZE_KEY, String(listState.cards.pageSize));
       listState.cards.page = 1;
       try { await loadCards(); } catch (error) { showToast(error.message, "error"); }
     });
 
     $("accounts-page-size").addEventListener("change", async (event) => {
       listState.accounts.pageSize = Number(event.target.value);
+      localStorage.setItem(ACCOUNTS_PAGE_SIZE_KEY, String(listState.accounts.pageSize));
       listState.accounts.page = 1;
       try { await loadAccounts(); } catch (error) { showToast(error.message, "error"); }
     });
@@ -3943,7 +3983,7 @@ ADMIN_HTML = r"""
           } catch (error) {
             const resultBox = document.querySelector(`.inline-test-result[data-account-id="${accountId}"]`);
             if (resultBox) resultBox.textContent = formatAdminErrorForPanel(error, error.apiData);
-            showToast(localizeAdminError(error.message) || "登录失败", "error", 8000);
+            showToast(localizeAdminError(error.message) || "重新登录失败", "error", 8000);
           }
           return;
         }

@@ -1372,8 +1372,15 @@ def ensure_account_proxy_from_pool(account_id: str) -> str:
     return assigned
 
 
-def login_pool_account(account_id: str, *, force: bool = True) -> dict[str, Any]:
-    """完整重新登录：清 token →（必要时）分配代理 → 邮箱 OTP / OAuth 刷新 → 校验额度。"""
+def login_pool_account(
+    account_id: str,
+    *,
+    force: bool = True,
+    auto_follow_up: bool = False,
+    model: str | None = None,
+    message: str | None = None,
+) -> dict[str, Any]:
+    """完整重新登录：清 token →（必要时）分配代理 → 邮箱 OTP / OAuth 刷新 → 校验额度；可选自动测试。"""
     row = get_pool_account(account_id)
     if not row:
         raise ValueError("账号不存在")
@@ -1392,21 +1399,29 @@ def login_pool_account(account_id: str, *, force: bool = True) -> dict[str, Any]
     if not proxy and get_proxy_pool():
         raise ValueError("请先在「设置」保存代理池，并在账号详情里选择代理后再登录")
 
-    credentials = _resolve_pool_account_credentials(row, force_login=True)
-    verify_started = time.time()
-    quota = query_chatgpt_quota(
-        credentials["accessToken"],
-        chatgpt_account_id=credentials["chatgptAccountId"],
-        proxy=credentials.get("proxy", proxy),
-    )
-    verify_ms = int((time.time() - verify_started) * 1000)
-    if not quota.get("ok", True):
-        err = str(quota.get("error") or "登录后校验失败").strip()
-        _mark_account_abnormal(account_id, quota=quota, error=err)
-        raise ValueError(err or "登录后校验额度失败（token 可能无效）")
+    credentials: dict[str, Any] | None = None
+    quota: dict[str, Any] | None = None
+    verify_ms = 0
+    try:
+        credentials = _resolve_pool_account_credentials(row, force_login=True)
+        verify_started = time.time()
+        quota = query_chatgpt_quota(
+            credentials["accessToken"],
+            chatgpt_account_id=credentials["chatgptAccountId"],
+            proxy=credentials.get("proxy", proxy),
+        )
+        verify_ms = int((time.time() - verify_started) * 1000)
+        if not quota.get("ok", True):
+            err = str(quota.get("error") or "额度接口返回失败").strip()
+            raise ValueError(f"登录流程已完成，但额度校验未通过: {err}")
+        update_account_quota(account_id, quota)
+    except Exception as exc:
+        # 登录过程中 token 可能已写入库；失败必须回滚，避免界面显示「登录失败」却能查额度/测试
+        _clear_pool_account_oauth_session(account_id)
+        _mark_account_abnormal(account_id, quota=quota if isinstance(quota, dict) else None, error=str(exc))
+        raise
 
-    update_account_quota(account_id, quota)
-    payload = {
+    payload: dict[str, Any] = {
         "ok": True,
         "accountId": account_id,
         "email": row["email"],
@@ -1418,7 +1433,15 @@ def login_pool_account(account_id: str, *, force: bool = True) -> dict[str, Any]
         "proxyAssigned": bool(proxy_assigned),
         "quotaSummary": quota.get("summary") or quota.get("planType") or "",
         "verifyMs": verify_ms,
+        "quota": quota,
     }
+
+    if auto_follow_up:
+        test_payload = test_pool_account(account_id, model=model, message=message)
+        payload["test"] = test_payload
+        payload["testStatus"] = test_payload.get("testStatus")
+        payload["testOk"] = str(test_payload.get("testStatus") or "").lower() == "success"
+
     log_activity(
         category="login",
         action="login.manual",
