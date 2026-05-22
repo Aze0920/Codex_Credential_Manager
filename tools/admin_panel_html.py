@@ -269,6 +269,13 @@ ADMIN_HTML = r"""
     .about-changelog .ver { font-weight: 600; color: #172033; }
     table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
     th, td { padding: 10px 8px; border-bottom: 1px solid rgba(228,234,246,0.9); text-align: left; vertical-align: middle; }
+    .account-email-copy {
+      cursor: pointer;
+      color: #4f46e5;
+      text-decoration: underline dotted;
+      text-underline-offset: 2px;
+    }
+    .account-email-copy:hover { opacity: 0.82; }
     th { color: var(--muted); }
     .col-check { width: 42px; text-align: center; }
     .col-check input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
@@ -2011,7 +2018,7 @@ ADMIN_HTML = r"""
       const proxyOptions = buildProxyOptions(row);
       return `
         <div class="test-panel" data-inline-test="${row.id}">
-          <strong>测试账号：${row.email}</strong>
+          <strong>测试账号：<span class="account-email-copy" data-copy-email="${escapeAttr(row.email)}" title="点击复制邮箱">${escapeHtml(row.email)}</span></strong>
           <div class="account-remark-row" data-account-id="${row.id}">
             <span class="account-remark-label">备注</span>
             <span class="account-remark-text ${row.remark ? "" : "is-empty"}" data-remark-display data-account-id="${row.id}" title="双击编辑">${escapeHtml(row.remark || "双击添加备注")}</span>
@@ -2143,7 +2150,14 @@ ADMIN_HTML = r"""
     }
 
     function isInteractiveTarget(target) {
-      return Boolean(target.closest("button, input, select, textarea, a, label"));
+      return Boolean(target.closest("button, input, select, textarea, a, label, .account-email-copy"));
+    }
+
+    async function copyAccountEmail(email) {
+      const text = String(email || "").trim();
+      if (!text) return;
+      await navigator.clipboard.writeText(text);
+      showToast(`已复制邮箱：${text}`, "success", 2000);
     }
 
     function syncAccountsSelectAllCheckbox(rows) {
@@ -2221,7 +2235,7 @@ ADMIN_HTML = r"""
         return `
         <tr class="data-row account-row ${selected ? "row-selected" : ""}" data-account-row="${row.id}">
           <td class="col-check"><input type="checkbox" class="account-check" data-account-id="${row.id}" ${selectedAccountIds.has(row.id) ? "checked" : ""}></td>
-          <td>${row.email}</td>
+          <td><span class="account-email-copy mono" data-copy-email="${escapeAttr(row.email)}" title="点击复制邮箱">${escapeHtml(row.email)}</span></td>
           <td>${accountTypeLabel(row.accountType)} · ${groupNameLabel(row.groupName)}</td>
           <td><span class="pill ${poolStatus.className}">${poolStatus.label}</span></td>
           <td class="quota-text">${quotaSummary(row)}${resolvePlanType(row) ? ` · ${formatPlanTypeLabel(resolvePlanType(row))}` : ""}</td>
@@ -2713,6 +2727,8 @@ ADMIN_HTML = r"""
         `代理: ${data.proxyLabel || "-"}`,
       ];
       if (data.proxyAssigned) lines.push("已从代理池自动绑定代理");
+      if (data.proxyRotated) lines.push("已自动切换为代理池中的下一个代理");
+      if (data.materialRefreshed) lines.push("已从库内素材刷新邮箱密码/令牌");
       if (data.quotaSummary) lines.push(`额度: ${data.quotaSummary}`);
       if (data.quota) {
         lines.push("");
@@ -2731,8 +2747,9 @@ ADMIN_HTML = r"""
       const resultBox = document.querySelector(`.inline-test-result[data-account-id="${accountId}"]`);
       const model = document.querySelector(`.inline-test-model[data-account-id="${accountId}"]`)?.value;
       const message = document.querySelector(`.inline-test-message[data-account-id="${accountId}"]`)?.value;
+      const proxy = document.querySelector(`.inline-test-proxy[data-account-id="${accountId}"]`)?.value ?? "";
       if (resultBox) {
-        resultBox.textContent = "重新登录中（完整流程）…\n登录成功后将自动查询额度并测试模型";
+        resultBox.textContent = "重新登录中（等同重新导入：清 token、刷新素材、走 OTP）…\n成功后将自动查额度并测试";
       }
       const res = await adminFetch("/api/admin/accounts/login", {
         method: "POST",
@@ -2740,6 +2757,7 @@ ADMIN_HTML = r"""
           accountId,
           force: true,
           autoFollowUp: true,
+          proxy,
           model,
           message: message || "hi",
         }),
@@ -3815,6 +3833,17 @@ ADMIN_HTML = r"""
 
     $("accounts-table").addEventListener("click", async (event) => {
       const target = event.target;
+
+      const copyEmailEl = target.closest(".account-email-copy");
+      if (copyEmailEl) {
+        event.stopPropagation();
+        try {
+          await copyAccountEmail(copyEmailEl.dataset.copyEmail || copyEmailEl.textContent);
+        } catch (error) {
+          showToast(error.message || "复制失败", "error");
+        }
+        return;
+      }
 
       if (target.classList.contains("account-check")) {
         event.stopPropagation();

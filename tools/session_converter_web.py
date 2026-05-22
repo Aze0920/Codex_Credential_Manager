@@ -3084,12 +3084,20 @@ def admin_login_account():
         auto_follow = payload.get("autoFollowUp", True)
         if isinstance(auto_follow, str):
             auto_follow = auto_follow.strip().lower() not in {"0", "false", "no"}
+        rotate_proxy = payload.get("rotateProxy", False)
+        if isinstance(rotate_proxy, str):
+            rotate_proxy = rotate_proxy.strip().lower() in {"1", "true", "yes"}
+        proxy_value = payload.get("proxy")
+        if proxy_value is None:
+            proxy_value = payload.get("assignedProxy")
         data = login_pool_account(
             account_id,
             force=bool(force),
             auto_follow_up=bool(auto_follow),
             model=str(payload.get("model") or "").strip() or None,
             message=str(payload.get("message") or "").strip() or None,
+            proxy=str(proxy_value).strip() if proxy_value is not None else None,
+            rotate_proxy=bool(rotate_proxy),
         )
     except Exception as exc:
         return api_error_response(exc)

@@ -17,7 +17,7 @@ from typing import Any, Iterator
 
 from core.db_config import get_database_path
 from core.activity_logger import log_activity, log_exception
-from core.account_parser import parse_account_import, parse_bulk_oauth_material
+from core.account_parser import parse_account_import, parse_bulk_oauth_material, parse_material_line
 from core.account_quota import query_chatgpt_quota
 from core.account_tester import (
     DEFAULT_TEST_MESSAGE,
@@ -403,11 +403,50 @@ def add_pool_accounts(records: list[dict[str, str]], *, pool_type: str = "pp") -
                     skipped += 1
                     continue
                 existing = conn.execute(
-                    "SELECT id FROM pool_accounts WHERE email = ? COLLATE NOCASE",
+                    "SELECT id, assigned_proxy FROM pool_accounts WHERE email = ? COLLATE NOCASE",
                     (email,),
                 ).fetchone()
                 if existing:
-                    skipped += 1
+                    existing_id = str(existing["id"])
+                    account_type = (item.get("account_type") or "email").strip().lower() or "email"
+                    group_name = normalize_group_name(item.get("group_name"), account_type=account_type)
+                    assigned_proxy = str(item.get("assigned_proxy") or "").strip()
+                    if not assigned_proxy:
+                        assigned_proxy = str(existing["assigned_proxy"] or "").strip()
+                    if not assigned_proxy and proxy_pool:
+                        assigned_proxy = proxy_pool[proxy_index % len(proxy_pool)]
+                        proxy_index += 1
+                    remark = str(item.get("remark") or "").strip()
+                    conn.execute(
+                        """
+                        UPDATE pool_accounts
+                        SET password = ?, client_id = ?, refresh_token = ?, material = ?,
+                            account_type = ?, oauth_data = '', group_name = ?,
+                            assigned_proxy = CASE WHEN ? != '' THEN ? ELSE assigned_proxy END,
+                            quota_data = '', quota_updated_at = NULL,
+                            test_status = 'pending',
+                            test_result = ?,
+                            last_test_at = NULL,
+                            remark = CASE WHEN ? != '' THEN ? ELSE remark END
+                        WHERE id = ?
+                        """,
+                        (
+                            item.get("password") or "",
+                            item.get("client_id") or "",
+                            item.get("refresh_token") or "",
+                            item.get("material") or "",
+                            account_type,
+                            group_name,
+                            assigned_proxy,
+                            assigned_proxy,
+                            json.dumps({"ok": False, "message": "等待检测"}, ensure_ascii=False),
+                            remark,
+                            remark,
+                            existing_id,
+                        ),
+                    )
+                    imported += 1
+                    inserted_ids.append(existing_id)
                     continue
                 row_id = secrets.token_urlsafe(8)
                 account_type = (item.get("account_type") or "email").strip().lower() or "email"
@@ -1327,22 +1366,108 @@ def _resolve_pool_account_credentials(row: sqlite3.Row, *, force_login: bool = F
 
 def _clear_pool_account_oauth_session(account_id: str) -> None:
     """清空已缓存的 ChatGPT token，强制走完整登录（等同重新导入后的登录流程）。"""
+    _persist_oauth_data(account_id, {})
+
+
+def _refresh_pool_account_credentials_from_material(account_id: str) -> bool:
+    """用库内 material 行刷新邮箱密码/令牌（与重新粘贴导入一致）。"""
     row = get_pool_account(account_id)
     if not row:
-        return
-    oauth = oauth_data_dict(row)
-    for key in (
-        "access_token",
-        "accesstoken",
-        "chatgpt_account_id",
-        "chatgptaccountid",
-        "session_token",
-        "sessiontoken",
-        "id_token",
-        "idtoken",
-    ):
-        oauth.pop(key, None)
-    _persist_oauth_data(account_id, oauth)
+        return False
+    account_type = (row["account_type"] or "email").strip().lower()
+    if account_type == "oauth":
+        return False
+    material = str(row["material"] or "").strip()
+    if not material:
+        return False
+    try:
+        account = parse_material_line(material.splitlines()[0] if "\n" in material else material)
+    except ValueError:
+        return False
+    pool_email = str(row["email"] or "").strip().lower()
+    if account.email.strip().lower() != pool_email:
+        return False
+    refreshed_material = "----".join(
+        [account.email, account.password, account.client_id, account.refresh_token]
+    )
+    with LOCK:
+        conn = _connect()
+        try:
+            conn.execute(
+                """
+                UPDATE pool_accounts
+                SET password = ?, client_id = ?, refresh_token = ?, material = ?
+                WHERE id = ?
+                """,
+                (account.password, account.client_id, account.refresh_token, refreshed_material, account_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return True
+
+
+def rotate_account_proxy_from_pool(account_id: str) -> str:
+    """从代理池取「下一个」代理并绑定（重新导入时也会分到新代理）。"""
+    from core.app_settings import get_proxy_pool
+
+    pool = [str(item).strip() for item in get_proxy_pool() if str(item).strip()]
+    if not pool:
+        return ""
+    row = get_pool_account(account_id)
+    if not row:
+        return ""
+    current = _account_proxy(row)
+    if current in pool and len(pool) > 1:
+        next_proxy = pool[(pool.index(current) + 1) % len(pool)]
+    elif current in pool:
+        next_proxy = current
+    else:
+        next_proxy = pool[hash(account_id) % len(pool)]
+    if next_proxy != current:
+        update_pool_account_proxy(account_id, next_proxy)
+    return next_proxy
+
+
+def _relogin_error_should_rotate_proxy(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return any(token in text for token in ("403", "401", "forbidden", "proxy", "timeout", "connection"))
+
+
+def _prepare_account_for_relogin(
+    account_id: str,
+    *,
+    proxy: str | None = None,
+    rotate_proxy: bool = False,
+) -> tuple[bool, bool]:
+    """清 session、刷新素材、应用代理。返回 (素材已刷新, 代理已轮换)。"""
+    _clear_pool_account_oauth_session(account_id)
+    material_refreshed = _refresh_pool_account_credentials_from_material(account_id)
+    proxy_rotated = False
+    if rotate_proxy:
+        rotate_account_proxy_from_pool(account_id)
+        proxy_rotated = True
+    elif proxy is not None:
+        update_pool_account_proxy(account_id, str(proxy).strip())
+    else:
+        ensure_account_proxy_from_pool(account_id)
+    with LOCK:
+        conn = _connect()
+        try:
+            conn.execute(
+                """
+                UPDATE pool_accounts
+                SET quota_data = '', quota_updated_at = NULL,
+                    test_status = 'pending',
+                    test_result = ?
+                WHERE id = ?
+                """,
+                (json.dumps({"ok": False, "message": "重新登录中"}, ensure_ascii=False), account_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return material_refreshed, proxy_rotated
 
 
 def ensure_account_proxy_from_pool(account_id: str) -> str:
@@ -1379,16 +1504,30 @@ def login_pool_account(
     auto_follow_up: bool = False,
     model: str | None = None,
     message: str | None = None,
+    proxy: str | None = None,
+    rotate_proxy: bool = False,
 ) -> dict[str, Any]:
-    """完整重新登录：清 token →（必要时）分配代理 → 邮箱 OTP / OAuth 刷新 → 校验额度；可选自动测试。"""
+    """完整重新登录：清 token → 刷新素材 → 应用/轮换代理 → OTP 登录 → 校验额度；可选自动测试。"""
     row = get_pool_account(account_id)
     if not row:
         raise ValueError("账号不存在")
 
     started = time.time()
+    material_refreshed = False
+    proxy_rotated = False
+    proxy_assigned = ""
     if force:
-        _clear_pool_account_oauth_session(account_id)
-    proxy_assigned = ensure_account_proxy_from_pool(account_id)
+        material_refreshed, proxy_rotated = _prepare_account_for_relogin(
+            account_id,
+            proxy=proxy,
+            rotate_proxy=rotate_proxy,
+        )
+    else:
+        if proxy is not None:
+            update_pool_account_proxy(account_id, str(proxy).strip())
+        else:
+            proxy_assigned = ensure_account_proxy_from_pool(account_id)
+
     row = get_pool_account(account_id)
     if not row:
         raise ValueError("账号不存在")
@@ -1402,24 +1541,42 @@ def login_pool_account(
     credentials: dict[str, Any] | None = None
     quota: dict[str, Any] | None = None
     verify_ms = 0
-    try:
-        credentials = _resolve_pool_account_credentials(row, force_login=True)
-        verify_started = time.time()
-        quota = query_chatgpt_quota(
-            credentials["accessToken"],
-            chatgpt_account_id=credentials["chatgptAccountId"],
-            proxy=credentials.get("proxy", proxy),
-        )
-        verify_ms = int((time.time() - verify_started) * 1000)
-        if not quota.get("ok", True):
-            err = str(quota.get("error") or "额度接口返回失败").strip()
-            raise ValueError(f"登录流程已完成，但额度校验未通过: {err}")
-        update_account_quota(account_id, quota)
-    except Exception as exc:
-        # 登录过程中 token 可能已写入库；失败必须回滚，避免界面显示「登录失败」却能查额度/测试
-        _clear_pool_account_oauth_session(account_id)
-        _mark_account_abnormal(account_id, quota=quota if isinstance(quota, dict) else None, error=str(exc))
-        raise
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            row = get_pool_account(account_id)
+            if not row:
+                raise ValueError("账号不存在")
+            proxy = _account_proxy(row)
+            credentials = _resolve_pool_account_credentials(row, force_login=True)
+            verify_started = time.time()
+            quota = query_chatgpt_quota(
+                credentials["accessToken"],
+                chatgpt_account_id=credentials["chatgptAccountId"],
+                proxy=credentials.get("proxy", proxy),
+            )
+            verify_ms = int((time.time() - verify_started) * 1000)
+            if not quota.get("ok", True):
+                err = str(quota.get("error") or "额度接口返回失败").strip()
+                raise ValueError(f"登录流程已完成，但额度校验未通过: {err}")
+            update_account_quota(account_id, quota)
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            _clear_pool_account_oauth_session(account_id)
+            if attempt == 0 and _relogin_error_should_rotate_proxy(exc) and get_proxy_pool():
+                rotate_account_proxy_from_pool(account_id)
+                proxy_rotated = True
+                continue
+            _mark_account_abnormal(account_id, quota=quota if isinstance(quota, dict) else None, error=str(exc))
+            raise last_exc from exc
+
+    if not credentials or not quota:
+        raise ValueError("重新登录失败")
+
+    row = get_pool_account(account_id) or row
+    proxy = _account_proxy(row)
 
     payload: dict[str, Any] = {
         "ok": True,
@@ -1431,6 +1588,8 @@ def login_pool_account(
         "proxy": proxy or credentials.get("proxy") or "",
         "proxyLabel": credentials.get("proxyLabel") or _proxy_label(proxy),
         "proxyAssigned": bool(proxy_assigned),
+        "materialRefreshed": material_refreshed,
+        "proxyRotated": proxy_rotated,
         "quotaSummary": quota.get("summary") or quota.get("planType") or "",
         "verifyMs": verify_ms,
         "quota": quota,
