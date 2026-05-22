@@ -92,7 +92,26 @@ def get_update_script_path() -> str:
     return str(PROJECT_ROOT / "scripts" / "update-docker.sh")
 
 
+def _resolve_mount_source(mount_point: str) -> str | None:
+    """从 /proc/self/mountinfo 解析 bind mount 在宿主机上的真实路径。"""
+    target = (mount_point or "").rstrip("/") or "/"
+    try:
+        for line in Path("/proc/self/mountinfo").read_text(encoding="utf-8", errors="replace").splitlines():
+            parts = line.split()
+            if len(parts) < 6 or parts[4] != target or "-" not in parts:
+                continue
+            sep = parts.index("-")
+            if len(parts) > sep + 2:
+                source = parts[sep + 2]
+                if source and Path(source).is_dir():
+                    return source
+    except OSError:
+        pass
+    return None
+
+
 def get_host_install_dir() -> str:
+    """容器内访问宿主机工程（读 VERSION、脚本等）。"""
     for candidate in (
         (os.environ.get("HOST_INSTALL_DIR") or "").strip(),
         "/host-codex",
@@ -103,9 +122,24 @@ def get_host_install_dir() -> str:
     return str(PROJECT_ROOT)
 
 
+def get_docker_bind_path() -> str:
+    """docker run -v 左侧必须是宿主机真实路径（容器内可能不存在该路径，不能 Path.is_dir）。"""
+    for candidate in (
+        (os.environ.get("HOST_BIND_PATH") or "").strip(),
+        (os.environ.get("HOST_PROJECT_PATH") or "").strip(),
+    ):
+        if candidate:
+            return candidate
+    resolved = _resolve_mount_source("/host-codex")
+    if resolved:
+        return resolved
+    return get_host_install_dir()
+
+
 def check_update_readiness() -> dict[str, Any]:
     issues: list[str] = []
     install_dir = get_host_install_dir()
+    bind_path = get_docker_bind_path()
     script = Path(get_update_script_path())
     if not (os.environ.get("ENABLE_SELF_UPDATE") or "").strip().lower() in {"1", "true", "yes"}:
         issues.append("未设置 ENABLE_SELF_UPDATE=1")
@@ -115,12 +149,17 @@ def check_update_readiness() -> dict[str, Any]:
         issues.append("未挂载宿主机项目目录（需要 .:/host-codex），请重建 Docker 容器")
     if install_dir != str(PROJECT_ROOT) and not (Path(install_dir) / ".git").is_dir():
         issues.append(f"宿主机目录不是 git 仓库: {install_dir}")
+    if bind_path in {"/host-codex", str(PROJECT_ROOT)} and install_dir == "/host-codex":
+        issues.append(
+            "无法解析宿主机路径，请在 .env 设置 HOST_BIND_PATH=/www/wwwroot/Codex 后重建容器"
+        )
     if not Path("/var/run/docker.sock").exists():
         issues.append("未挂载 docker.sock，无法一键重建容器")
     return {
         "ready": len(issues) == 0,
         "issues": issues,
         "installDir": install_dir,
+        "hostBindPath": bind_path,
         "updateScript": str(script),
     }
 

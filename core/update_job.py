@@ -5,11 +5,12 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
-from core.app_version import get_host_install_dir
+from core.app_version import get_docker_bind_path, get_host_install_dir
 
 _DATA = Path(__file__).resolve().parent.parent / "data"
 LOG_FILE = _DATA / "update-latest.log"
@@ -147,105 +148,82 @@ def get_update_status() -> dict[str, Any]:
     }
 
 
+def _trigger_script_path() -> Path:
+    for candidate in (
+        Path("/host-codex/scripts/trigger-update.py"),
+        Path(__file__).resolve().parent.parent / "scripts" / "trigger-update.py",
+    ):
+        if candidate.is_file():
+            return candidate
+    return Path("/host-codex/scripts/trigger-update.py")
+
+
 def start_update_job() -> dict[str, Any]:
     with _lock:
         status = get_update_status()
         if status["running"] or _job_running():
             return {"ok": True, "alreadyRunning": True, **status}
 
-        install_dir = get_host_install_dir()
-        script_host = Path(install_dir) / "scripts" / "update-docker.sh"
-        if not script_host.is_file():
-            script_host = Path("/host-codex/scripts/update-docker.sh")
-        if not script_host.is_file():
-            return {"ok": False, "error": f"更新脚本不存在: {script_host}"}
+        bind_path = get_docker_bind_path()
+        if bind_path in {"/host-codex", "/app", ""}:
+            return {
+                "ok": False,
+                "error": "请在 .env 设置 HOST_BIND_PATH=/www/wwwroot/Codex 后执行 docker compose -p codex up -d --force-recreate",
+                "log": "",
+            }
 
         if not Path("/var/run/docker.sock").exists():
             return {"ok": False, "error": "未挂载 docker.sock，无法一键更新"}
 
+        script = _trigger_script_path()
+        if not script.is_file():
+            return {"ok": False, "error": f"缺少启动脚本: {script}"}
+
         _DATA.mkdir(parents=True, exist_ok=True)
-        LOG_FILE.write_text("[progress] 0|准备启动更新容器…\n", encoding="utf-8")
-
-        docker = _docker_bin()
-        env = _docker_env()
-        subprocess.run(
-            [docker, "rm", "-f", JOB_CONTAINER],
-            capture_output=True,
-            timeout=30,
-            env=env,
-        )
-
-        # 包装：任何秒退都写入 data/update-latest.log
-        inner = (
-            "set -e; "
-            "LOG=/work/data/update-latest.log; "
-            "mkdir -p /work/data; "
-            "echo '[progress] 1|更新容器已启动 (docker:27-cli)' >>\"$LOG\"; "
-            "docker version >>\"$LOG\" 2>&1 || true; "
-            "apk add --no-cache git curl >>\"$LOG\" 2>&1 || true; "
-            "sed -i 's/\\r$//' /work/scripts/update-docker.sh 2>/dev/null || true; "
-            "sh /work/scripts/update-docker.sh >>\"$LOG\" 2>&1 "
-            "|| { echo \"[error] 更新脚本退出码 $?\" >>\"$LOG\"; exit 1; }"
-        )
-        cmd = [
-            docker,
-            "run",
-            "-d",
-            "--rm",
-            "--name",
-            JOB_CONTAINER,
-            "--network",
-            "host",
-            "-v",
-            f"{install_dir}:/work",
-            "-v",
-            "/var/run/docker.sock:/var/run/docker.sock",
-            "-e",
-            "HOST_INSTALL_DIR=/work",
-            "-e",
-            "UPDATE_LOG_FILE=/work/data/update-latest.log",
-            "-e",
-            "COMPOSE_PROJECT_NAME=codex",
-            UPDATE_RUNNER_IMAGE,
-            "sh",
-            "-c",
-            inner,
-        ]
+        LOG_FILE.write_text("[progress] 0|正在启动更新进程…\n", encoding="utf-8")
 
         try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=120,
-                env=env,
+            proc = subprocess.Popen(
+                [sys.executable, str(script)],
+                cwd=str(script.parent.parent),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                env={**os.environ, "PYTHONUNBUFFERED": "1"},
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            LOG_FILE.write_text(
-                LOG_FILE.read_text(encoding="utf-8", errors="replace")
-                + f"\n[error] 启动更新容器失败: {exc}\n",
-                encoding="utf-8",
-            )
-            return {"ok": False, "error": f"启动更新容器失败: {exc}", "log": _read_log_tail()}
+        except OSError as exc:
+            _append_log(f"[error] 无法启动 trigger-update.py: {exc}")
+            return {"ok": False, "error": str(exc), "log": _read_log_tail()}
 
-        if proc.returncode != 0:
-            err = (proc.stderr or proc.stdout or "").strip()
-            LOG_FILE.write_text(
-                LOG_FILE.read_text(encoding="utf-8", errors="replace")
-                + f"\n[error] docker run 失败: {err}\n",
-                encoding="utf-8",
-            )
-            return {"ok": False, "error": err or "启动更新容器失败", "log": _read_log_tail()}
+        time.sleep(1.2)
+        if proc.poll() is not None and proc.returncode not in (None, 0):
+            return {
+                "ok": False,
+                "error": _failure_message(prefix="更新启动失败"),
+                "log": _read_log_tail(),
+            }
 
-        for _ in range(8):
-            time.sleep(0.4)
-            if _job_running():
-                return {
-                    "ok": True,
-                    "started": True,
-                    "message": "更新已在独立容器中运行",
-                    "logPath": str(LOG_FILE),
-                }
+        if _job_running():
+            return {
+                "ok": True,
+                "started": True,
+                "message": "更新已在独立容器中运行",
+                "logPath": str(LOG_FILE),
+            }
 
-        msg = _failure_message(prefix="更新容器启动后立即退出")
-        return {"ok": False, "error": msg, "log": _read_log_tail()}
+        log = _read_log_tail()
+        if "[engine]" in log and "[error]" in log:
+            return {"ok": False, "error": _failure_message(prefix="更新启动失败"), "log": log}
+
+        return {
+            "ok": True,
+            "started": True,
+            "message": "更新进程已启动",
+            "logPath": str(LOG_FILE),
+        }
+
+
+def _append_log(line: str) -> None:
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with LOG_FILE.open("a", encoding="utf-8") as fh:
+        fh.write(line.rstrip() + "\n")

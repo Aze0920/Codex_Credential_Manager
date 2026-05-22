@@ -2,6 +2,19 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.35] - 2026-05-22
+
+### 修复
+
+- **根因**：`HOST_BIND_PATH=/www/wwwroot/Codex` 在容器内用 `Path.is_dir()` 判断失败，仍误用 `/host-codex` 导致更新秒退。
+- 新增 `scripts/trigger-update.py` 独立进程启动更新（日志含 `[engine] 1.0.35` 与 `[bind]`）；默认 `HOST_BIND_PATH`；复用当前 Web 镜像跑 compose。
+
+## [1.0.34] - 2026-05-22
+
+### 修复
+
+- 一键更新根因：`docker run -v` 误用容器路径 `/host-codex`，宿主机上不存在导致任务秒退；现自动解析 mountinfo 或读取 `.env` 的 `HOST_BIND_PATH`（如 `/www/wwwroot/Codex`），并增加挂载预检。
+
 ## [1.0.33] - 2026-05-22
 
 ### 修复

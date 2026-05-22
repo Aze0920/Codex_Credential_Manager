@@ -17,12 +17,14 @@ services:
       ENABLE_SELF_UPDATE: "1"
       UPDATE_SCRIPT: /app/scripts/update-docker.sh
       HOST_INSTALL_DIR: /host-codex
+      HOST_BIND_PATH: ${HOST_BIND_PATH:-/www/wwwroot/Codex}
       GITHUB_REPO: Aze0920/Codex_Credential_Manager
     volumes:
       - ./data:/app/data
       - ./VERSION:/app/VERSION
       - ./core:/app/core:ro
       - ./tools:/app/tools:ro
+      - ./scripts:/app/scripts:ro
       - .:/host-codex
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:

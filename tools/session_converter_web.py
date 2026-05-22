@@ -2609,6 +2609,33 @@ def admin_update_status():
     return jsonify(get_update_status())
 
 
+@app.get("/api/admin/update/diag")
+def admin_update_diag():
+    denied = admin_required()
+    if denied:
+        return denied
+    from core.app_version import get_docker_bind_path, get_host_install_dir
+    from core.update_job import LOG_FILE, _job_running, _read_log_tail
+
+    bind = get_docker_bind_path()
+    log = _read_log_tail()
+    return jsonify(
+        {
+            "hostInstallDir": get_host_install_dir(),
+            "hostBindPath": bind,
+            "hostBindPathOk": bind not in {"", "/host-codex", "/app"},
+            "jobRunning": _job_running(),
+            "logPath": str(LOG_FILE),
+            "log": log,
+            "triggerScript": str(
+                Path("/host-codex/scripts/trigger-update.py")
+                if Path("/host-codex/scripts/trigger-update.py").is_file()
+                else Path(__file__).resolve().parent.parent / "scripts" / "trigger-update.py"
+            ),
+        }
+    )
+
+
 @app.get("/api/admin/cards")
 def admin_list_cards():
     denied = admin_required()

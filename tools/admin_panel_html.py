@@ -2864,6 +2864,9 @@ ADMIN_HTML = r"""
         `<div class="version-row"><span>状态</span><strong>${escapeHtml(statusText)}</strong></div>`,
         remote.htmlUrl ? `<p class="version-note"><a href="${escapeHtml(remote.htmlUrl)}" target="_blank" rel="noopener">查看 GitHub 发布说明</a></p>` : "",
         remote.body ? `<p class="version-note">${escapeHtml(remote.body.slice(0, 600))}${remote.body.length > 600 ? "…" : ""}</p>` : "",
+        readiness.hostBindPath
+          ? `<p class="version-note">宿主机路径：<code>${escapeHtml(readiness.hostBindPath)}</code></p>`
+          : "",
         (!envReady && readiness.issues && readiness.issues.length)
           ? `<p class="version-note" style="color:#c62828;">无法一键更新：${escapeHtml(readiness.issues.join("；"))}</p>`
           : "",
