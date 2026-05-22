@@ -1879,7 +1879,7 @@ ADMIN_HTML = r"""
         ? `\n\n邮箱验证码: ${mailboxOtpByAccount[row.id]}`
         : "";
       if (!row?.testResult) {
-        return `${head}${otpLine}\n\n点击「开始测试」或「查询额度」`;
+        return `${head}${otpLine}\n\n异常可先点「开始登录」，再「查询额度」或「开始测试」`;
       }
       return `${head}${otpLine}\n\n${formatTestResult({ testStatus: row.testStatus, result: row.testResult }, { includeQuota: false })}`;
     }
@@ -2006,6 +2006,7 @@ ADMIN_HTML = r"""
           </div>
           <div class="controls" style="margin-top:0;">
             <button class="button primary inline-run-test-btn" data-account-id="${row.id}">开始测试</button>
+            <button class="button inline-login-btn" data-account-id="${row.id}">开始登录</button>
             <button class="button inline-query-quota-btn" data-account-id="${row.id}">查询额度</button>
             ${accountCanLinkMailbox(row) ? `<button class="button inline-open-mailbox-btn" data-account-id="${row.id}">绑定 Outlook 凭证</button>` : ""}
             ${accountCanUpdateMailbox(row) ? `<button class="button inline-open-mailbox-btn" data-account-id="${row.id}">更新 Outlook 凭证</button>` : ""}
@@ -2651,6 +2652,31 @@ ADMIN_HTML = r"""
       if (!res.ok) throw new Error(data.error || "测试失败");
       await loadAccounts();
       showToast(data.result?.ok ? "测试通过" : localizeAdminError(data.result?.error, "测试失败"), data.result?.ok ? "success" : "error", data.result?.ok ? 1500 : 5000);
+      return data;
+    }
+
+    function formatLoginResult(data) {
+      if (!data?.ok) return `登录失败: ${data?.error || "未知错误"}`;
+      return [
+        "登录成功",
+        `方式: ${formatLoginMode(data.loginMode)}`,
+        `耗时: ${data.loginMs ?? "-"}ms`,
+        `代理: ${data.proxyLabel || "-"}`,
+      ].join("\n");
+    }
+
+    async function runAccountLogin(accountId) {
+      const resultBox = document.querySelector(`.inline-test-result[data-account-id="${accountId}"]`);
+      if (resultBox) resultBox.textContent = "登录中，请稍候（邮箱账号可能需要读取验证码）…";
+      const res = await adminFetch("/api/admin/accounts/login", {
+        method: "POST",
+        body: JSON.stringify({ accountId, force: true }),
+      });
+      const data = await readAdminJson(res, "登录失败");
+      if (!res.ok) throw new Error(data.error || "登录失败");
+      if (resultBox) resultBox.textContent = formatLoginResult(data);
+      await loadAccounts();
+      showToast(`登录成功：${formatLoginMode(data.loginMode)}`, "success", 2500);
       return data;
     }
 
@@ -3862,6 +3888,17 @@ ADMIN_HTML = r"""
             const resultBox = document.querySelector(`.inline-test-result[data-account-id="${accountId}"]`);
             if (resultBox) resultBox.textContent = localizeAdminError(error.message, "测试失败");
             showToast(error.message || "测试失败", "error");
+          }
+          return;
+        }
+
+        if (target.classList.contains("inline-login-btn")) {
+          try {
+            await runAccountLogin(accountId);
+          } catch (error) {
+            const resultBox = document.querySelector(`.inline-test-result[data-account-id="${accountId}"]`);
+            if (resultBox) resultBox.textContent = localizeAdminError(error.message, "登录失败");
+            showToast(error.message || "登录失败", "error", 6000);
           }
           return;
         }

@@ -65,6 +65,7 @@ from core.card_store import (
     redeem_card,
     link_mailbox_to_oauth_account,
     link_optional_oauth_pool_account,
+    login_pool_account,
     reauthorize_pool_account,
     update_pool_account_proxy,
     update_pool_account_remark,
@@ -3052,6 +3053,25 @@ def admin_read_account_otp():
         if not account_id:
             raise ValueError("缺少 accountId")
         data = read_pool_account_otp(account_id)
+    except Exception as exc:
+        return api_error_response(exc)
+    return jsonify(data)
+
+
+@app.post("/api/admin/accounts/login")
+def admin_login_account():
+    denied = admin_required()
+    if denied:
+        return denied
+    payload = get_request_payload()
+    try:
+        account_id = str(payload.get("accountId") or payload.get("id") or "").strip()
+        if not account_id:
+            raise ValueError("缺少 accountId")
+        force = payload.get("force", True)
+        if isinstance(force, str):
+            force = force.strip().lower() not in {"0", "false", "no"}
+        data = login_pool_account(account_id, force=bool(force))
     except Exception as exc:
         return api_error_response(exc)
     return jsonify(data)

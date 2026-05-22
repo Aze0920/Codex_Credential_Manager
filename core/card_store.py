@@ -1275,7 +1275,7 @@ def update_pool_account_proxy(account_id: str, proxy: str | None) -> dict[str, A
     return payload
 
 
-def _resolve_pool_account_credentials(row: sqlite3.Row) -> dict[str, Any]:
+def _resolve_pool_account_credentials(row: sqlite3.Row, *, force_login: bool = False) -> dict[str, Any]:
     account_id = row["id"]
     account_type = (row["account_type"] or "email").strip().lower()
     started = time.time()
@@ -1298,7 +1298,7 @@ def _resolve_pool_account_credentials(row: sqlite3.Row) -> dict[str, Any]:
             "proxyLabel": _proxy_label(proxy),
         }
 
-    cached = _email_session_cache(oauth_data_dict(row))
+    cached = None if force_login else _email_session_cache(oauth_data_dict(row))
     if cached:
         access_token, chatgpt_account_id = cached
         return {
@@ -1323,6 +1323,36 @@ def _resolve_pool_account_credentials(row: sqlite3.Row) -> dict[str, Any]:
         "proxy": proxy,
         "proxyLabel": _proxy_label(proxy),
     }
+
+
+def login_pool_account(account_id: str, *, force: bool = True) -> dict[str, Any]:
+    """重新登录并刷新 oauth 缓存（邮箱账号走 OTP 登录，OAuth 账号刷新 token）。"""
+    row = get_pool_account(account_id)
+    if not row:
+        raise ValueError("账号不存在")
+
+    started = time.time()
+    credentials = _resolve_pool_account_credentials(row, force_login=force)
+    payload = {
+        "ok": True,
+        "accountId": account_id,
+        "email": row["email"],
+        "accountType": (row["account_type"] or "email").strip().lower(),
+        "loginMode": credentials.get("loginMode"),
+        "loginMs": credentials.get("loginMs"),
+        "proxyLabel": credentials.get("proxyLabel"),
+    }
+    log_activity(
+        category="login",
+        action="login.manual",
+        message=f"{row['email']} 登录成功 ({credentials.get('loginMode')})",
+        account_id=account_id,
+        email=row["email"],
+        status="success",
+        duration_ms=int((time.time() - started) * 1000),
+        detail=payload,
+    )
+    return payload
 
 
 def query_pool_account_quota(account_id: str) -> dict[str, Any]:
