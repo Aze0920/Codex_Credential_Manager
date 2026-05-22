@@ -80,10 +80,18 @@ def _proc_running() -> bool:
     return False
 
 
+def _docker_bin() -> str:
+    for candidate in ("/usr/local/bin/docker", "/usr/bin/docker", "docker"):
+        if candidate != "docker" and not Path(candidate).is_file():
+            continue
+        return candidate
+    return "docker"
+
+
 def _sidecar_running() -> bool:
     try:
         out = subprocess.run(
-            ["docker", "ps", "-q", "-f", "name=^codex-update-job$"],
+            [_docker_bin(), "ps", "-q", "-f", "name=^codex-update-job$"],
             capture_output=True,
             text=True,
             timeout=8,

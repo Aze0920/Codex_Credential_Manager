@@ -2,6 +2,13 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.27] - 2026-05-22
+
+### 修复
+
+- 一键更新：镜像内安装 **docker CLI**；重建任务改用 alpine + 挂载 docker/compose，修复 `docker: command not found`。
+- 更新日志不再重复写入两行。
+
 ## [1.0.25] - 2026-05-22
 
 ### 新增

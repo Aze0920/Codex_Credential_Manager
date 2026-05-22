@@ -2,9 +2,13 @@ FROM python:3.11-slim-bookworm
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates git \
+    && curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-26.1.4.tgz" \
+        | tar -xz -C /tmp \
+    && mv /tmp/docker/docker /usr/local/bin/docker \
     && curl -fsSL "https://github.com/docker/compose/releases/download/v2.27.1/docker-compose-linux-x86_64" \
         -o /usr/local/bin/docker-compose \
-    && chmod +x /usr/local/bin/docker-compose \
+    && chmod +x /usr/local/bin/docker /usr/local/bin/docker-compose \
+    && docker --version \
     && /usr/local/bin/docker-compose version \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
