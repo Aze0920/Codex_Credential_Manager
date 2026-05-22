@@ -2,6 +2,13 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.33] - 2026-05-22
+
+### 修复
+
+- 一键更新改用 `docker:27-cli` 任务镜像（自带 `docker compose`），不再挂载宿主机 `/usr/local/bin/docker-compose`（宝塔常缺失导致秒退）。
+- 更新秒退时把错误写入 `data/update-latest.log` 并在弹窗展示；修复 CRLF 脚本、compose 检测与健康检查。
+
 ## [1.0.32] - 2026-05-22
 
 ### 改进

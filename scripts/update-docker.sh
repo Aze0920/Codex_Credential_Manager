@@ -1,6 +1,5 @@
 #!/bin/sh
 # 在独立容器 codex-update-job 中执行（由后台 API 启动，不占用 Web 容器进程）
-# 顺序：git pull → compose 重建 → 健康检查
 set -eu
 
 DIR="${HOST_INSTALL_DIR:-/work}"
@@ -12,22 +11,45 @@ log() { echo "$*" >>"$LOG"; }
 progress() { log "[progress] $1|$2"; }
 fail() { log "[error] $*"; exit 1; }
 
+# 去掉 Windows CRLF，避免 /bin/sh^M 秒退
+if [ -f "$DIR/scripts/update-docker.sh" ]; then
+  sed -i 's/\r$//' "$DIR/scripts/update-docker.sh" 2>/dev/null || true
+fi
+
 mkdir -p "$(dirname "$LOG")" "$DIR/data/backups"
-: >"$LOG"
-progress 2 "更新任务已启动"
+log "[progress] 2|更新任务已启动"
 log "[update-docker] runner=$(hostname) DIR=$DIR"
 
 if [ ! -d "$DIR/.git" ]; then fail "不是 git 仓库: $DIR"; fi
 if [ ! -S /var/run/docker.sock ]; then fail "未挂载 docker.sock"; fi
 if [ ! -f "$DIR/docker-compose.yml" ]; then fail "缺少 docker-compose.yml"; fi
-if [ ! -x /usr/local/bin/docker-compose ]; then fail "未挂载 docker-compose"; fi
 
 export DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"
 export GIT_TERMINAL_PROMPT=0
 
+compose_cmd() {
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    docker compose -f "$DIR/docker-compose.yml" -p "$COMPOSE_PROJECT" "$@"
+    return
+  fi
+  if [ -f /usr/local/bin/docker-compose ]; then
+    /usr/local/bin/docker-compose -f "$DIR/docker-compose.yml" -p "$COMPOSE_PROJECT" "$@"
+    return
+  fi
+  fail "未找到 docker compose（请确认 docker.sock 与 docker CLI 可用）"
+}
+
 if ! command -v git >/dev/null 2>&1; then
   progress 5 "安装 git…"
-  apk add --no-cache git >/dev/null 2>&1 || fail "无法安装 git"
+  if command -v apk >/dev/null 2>&1; then
+    apk add --no-cache git >>"$LOG" 2>&1 || fail "无法安装 git"
+  else
+    fail "容器内无 git，请使用 docker:27-cli 镜像"
+  fi
+fi
+
+if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+  command -v apk >/dev/null 2>&1 && apk add --no-cache curl >>"$LOG" 2>&1 || true
 fi
 
 cd "$DIR" || fail "无法进入 $DIR"
@@ -53,11 +75,11 @@ progress 45 "代码已同步到 v${VER}"
 log "[ok] synced $VER"
 
 progress 50 "停止旧容器"
-/usr/local/bin/docker-compose -f docker-compose.yml -p "$COMPOSE_PROJECT" down --remove-orphans >>"$LOG" 2>&1 || true
-/usr/local/bin/docker rm -f "$MAIN_CONTAINER" >>"$LOG" 2>&1 || true
+compose_cmd down --remove-orphans >>"$LOG" 2>&1 || true
+docker rm -f "$MAIN_CONTAINER" >>"$LOG" 2>&1 || true
 
 progress 60 "正在 build 并启动（请耐心等待）"
-if ! /usr/local/bin/docker-compose -f docker-compose.yml -p "$COMPOSE_PROJECT" up -d --build --force-recreate --remove-orphans >>"$LOG" 2>&1; then
+if ! compose_cmd up -d --build --force-recreate --remove-orphans >>"$LOG" 2>&1; then
   fail "docker compose up 失败"
 fi
 
@@ -65,7 +87,11 @@ progress 92 "等待服务就绪"
 ok=0
 i=0
 while [ "$i" -lt 60 ]; do
-  if wget -qO- http://127.0.0.1:8766/api/admin/health 2>/dev/null | grep -q '"ok"'; then
+  if curl -sf "http://127.0.0.1:8766/api/admin/health" 2>/dev/null | grep -q '"ok"'; then
+    ok=1
+    break
+  fi
+  if wget -qO- "http://127.0.0.1:8766/api/admin/health" 2>/dev/null | grep -q '"ok"'; then
     ok=1
     break
   fi

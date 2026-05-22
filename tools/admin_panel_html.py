@@ -3037,6 +3037,7 @@ ADMIN_HTML = r"""
         const res = await adminFetch("/api/admin/update/run", { method: "POST", body: "{}" });
         const data = await readAdminJson(res, "启动更新失败");
         if (!res.ok || !data.ok) {
+          if (logEl && data.log) logEl.textContent = data.log;
           throw new Error(data.error || "无法启动更新");
         }
         showToast(data.alreadyRunning ? "更新任务进行中" : "更新已开始", "success", 2000);
@@ -3053,8 +3054,12 @@ ADMIN_HTML = r"""
       } catch (error) {
         const msg = String(error?.message || "更新失败");
         showToast(msg, "error", 8000);
-        if (logEl && !logEl.textContent.trim()) {
-          logEl.textContent = msg + "\n\n（若服务已断开，请刷新页面后查看 data/update-latest.log）";
+        if (logEl) {
+          const statusRes = await adminFetch("/api/admin/update/status").catch(() => null);
+          const statusData = statusRes ? await statusRes.json().catch(() => ({})) : {};
+          logEl.textContent = statusData.log || logEl.textContent || (
+            msg + "\n\n（请查看 data/update-latest.log）"
+          );
         }
         setUpdateProgress(0, "更新失败");
       } finally {

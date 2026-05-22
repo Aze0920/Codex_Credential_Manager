@@ -14,9 +14,12 @@ from core.app_version import get_host_install_dir
 _DATA = Path(__file__).resolve().parent.parent / "data"
 LOG_FILE = _DATA / "update-latest.log"
 JOB_CONTAINER = "codex-update-job"
+# 自带 docker compose 插件，不依赖宿主机 /usr/local/bin/docker-compose
+UPDATE_RUNNER_IMAGE = (os.environ.get("UPDATE_RUNNER_IMAGE") or "docker:27-cli").strip()
 _lock = __import__("threading").Lock()
 
 _PROGRESS_RE = re.compile(r"^\[progress\]\s*(\d+)\|(.*)$")
+_ERROR_RE = re.compile(r"^\[error\]\s*(.+)$", re.MULTILINE)
 
 
 def _docker_bin() -> str:
@@ -26,21 +29,8 @@ def _docker_bin() -> str:
     return "docker"
 
 
-def _compose_bin_host() -> str:
-    for candidate in ("/usr/local/bin/docker-compose", "/usr/bin/docker-compose"):
-        if Path(candidate).is_file():
-            return candidate
-    return "/usr/local/bin/docker-compose"
-
-
-def _update_script_path(install_dir: str) -> Path:
-    for candidate in (
-        Path(install_dir) / "scripts" / "update-docker.sh",
-        Path("/host-codex/scripts/update-docker.sh"),
-    ):
-        if candidate.is_file():
-            return candidate
-    return Path(install_dir) / "scripts/update-docker.sh"
+def _docker_env() -> dict[str, str]:
+    return {**os.environ, "DOCKER_HOST": os.environ.get("DOCKER_HOST", "unix:///var/run/docker.sock")}
 
 
 def _dedupe_log_lines(text: str) -> str:
@@ -83,6 +73,12 @@ def _parse_log_state(text: str) -> dict[str, Any]:
             progress = 100
             message = "更新完成"
 
+    if state == "running" and error is None:
+        err_match = _ERROR_RE.search(text)
+        if err_match:
+            state = "failed"
+            error = err_match.group(1).strip()
+
     return {
         "state": state,
         "progress": progress,
@@ -98,11 +94,40 @@ def _job_running() -> bool:
             capture_output=True,
             text=True,
             timeout=8,
-            env={**os.environ, "DOCKER_HOST": os.environ.get("DOCKER_HOST", "unix:///var/run/docker.sock")},
+            env=_docker_env(),
         )
         return bool((out.stdout or "").strip())
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def _fetch_container_logs() -> str:
+    try:
+        out = subprocess.run(
+            [_docker_bin(), "logs", "--tail", "80", JOB_CONTAINER],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=_docker_env(),
+        )
+        return (out.stdout or out.stderr or "").strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _failure_message(*, prefix: str) -> str:
+    log = _read_log_tail()
+    if log.strip():
+        for line in reversed(log.splitlines()):
+            if "[error]" in line:
+                return f"{prefix}：{line.split('[error]', 1)[-1].strip()}"
+            if line.strip() and not line.startswith("[progress] 0|"):
+                return f"{prefix}（详见下方日志）"
+    docker_logs = _fetch_container_logs()
+    if docker_logs:
+        last = docker_logs.splitlines()[-1][:200]
+        return f"{prefix}：{last}"
+    return prefix
 
 
 def get_update_status() -> dict[str, Any]:
@@ -113,7 +138,7 @@ def get_update_status() -> dict[str, Any]:
         running = False
     elif not running and log.strip() and "[done]" not in log and "[error]" not in log:
         parsed["state"] = "failed"
-        parsed["error"] = parsed["error"] or "更新任务已结束但未完成，请查看日志"
+        parsed["error"] = parsed["error"] or _failure_message(prefix="更新任务已结束但未完成")
     return {
         "running": running,
         "log": log,
@@ -129,26 +154,39 @@ def start_update_job() -> dict[str, Any]:
             return {"ok": True, "alreadyRunning": True, **status}
 
         install_dir = get_host_install_dir()
-        script = _update_script_path(install_dir)
-        if not script.is_file():
-            return {"ok": False, "error": f"更新脚本不存在: {script}"}
+        script_host = Path(install_dir) / "scripts" / "update-docker.sh"
+        if not script_host.is_file():
+            script_host = Path("/host-codex/scripts/update-docker.sh")
+        if not script_host.is_file():
+            return {"ok": False, "error": f"更新脚本不存在: {script_host}"}
 
         if not Path("/var/run/docker.sock").exists():
             return {"ok": False, "error": "未挂载 docker.sock，无法一键更新"}
 
-        compose_bin = _compose_bin_host()
         _DATA.mkdir(parents=True, exist_ok=True)
         LOG_FILE.write_text("[progress] 0|准备启动更新容器…\n", encoding="utf-8")
 
         docker = _docker_bin()
+        env = _docker_env()
         subprocess.run(
             [docker, "rm", "-f", JOB_CONTAINER],
             capture_output=True,
             timeout=30,
-            env={**os.environ, "DOCKER_HOST": "unix:///var/run/docker.sock"},
+            env=env,
         )
 
-        script_in_container = "/work/scripts/update-docker.sh"
+        # 包装：任何秒退都写入 data/update-latest.log
+        inner = (
+            "set -e; "
+            "LOG=/work/data/update-latest.log; "
+            "mkdir -p /work/data; "
+            "echo '[progress] 1|更新容器已启动 (docker:27-cli)' >>\"$LOG\"; "
+            "docker version >>\"$LOG\" 2>&1 || true; "
+            "apk add --no-cache git curl >>\"$LOG\" 2>&1 || true; "
+            "sed -i 's/\\r$//' /work/scripts/update-docker.sh 2>/dev/null || true; "
+            "sh /work/scripts/update-docker.sh >>\"$LOG\" 2>&1 "
+            "|| { echo \"[error] 更新脚本退出码 $?\" >>\"$LOG\"; exit 1; }"
+        )
         cmd = [
             docker,
             "run",
@@ -162,17 +200,16 @@ def start_update_job() -> dict[str, Any]:
             f"{install_dir}:/work",
             "-v",
             "/var/run/docker.sock:/var/run/docker.sock",
-            "-v",
-            f"{compose_bin}:/usr/local/bin/docker-compose:ro",
             "-e",
             "HOST_INSTALL_DIR=/work",
             "-e",
-            f"UPDATE_LOG_FILE=/work/data/update-latest.log",
+            "UPDATE_LOG_FILE=/work/data/update-latest.log",
             "-e",
             "COMPOSE_PROJECT_NAME=codex",
-            "alpine:3.20",
+            UPDATE_RUNNER_IMAGE,
             "sh",
-            script_in_container,
+            "-c",
+            inner,
         ]
 
         try:
@@ -180,23 +217,35 @@ def start_update_job() -> dict[str, Any]:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=60,
-                env={**os.environ, "DOCKER_HOST": "unix:///var/run/docker.sock"},
+                timeout=120,
+                env=env,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            return {"ok": False, "error": f"启动更新容器失败: {exc}"}
+            LOG_FILE.write_text(
+                LOG_FILE.read_text(encoding="utf-8", errors="replace")
+                + f"\n[error] 启动更新容器失败: {exc}\n",
+                encoding="utf-8",
+            )
+            return {"ok": False, "error": f"启动更新容器失败: {exc}", "log": _read_log_tail()}
 
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout or "").strip()
-            return {"ok": False, "error": err or "启动更新容器失败"}
+            LOG_FILE.write_text(
+                LOG_FILE.read_text(encoding="utf-8", errors="replace")
+                + f"\n[error] docker run 失败: {err}\n",
+                encoding="utf-8",
+            )
+            return {"ok": False, "error": err or "启动更新容器失败", "log": _read_log_tail()}
 
-        time.sleep(0.5)
-        if not _job_running():
-            return {"ok": False, "error": "更新容器启动后立即退出，请查看 data/update-latest.log"}
+        for _ in range(8):
+            time.sleep(0.4)
+            if _job_running():
+                return {
+                    "ok": True,
+                    "started": True,
+                    "message": "更新已在独立容器中运行",
+                    "logPath": str(LOG_FILE),
+                }
 
-        return {
-            "ok": True,
-            "started": True,
-            "message": "更新已在独立容器中运行",
-            "logPath": str(LOG_FILE),
-        }
+        msg = _failure_message(prefix="更新容器启动后立即退出")
+        return {"ok": False, "error": msg, "log": _read_log_tail()}
