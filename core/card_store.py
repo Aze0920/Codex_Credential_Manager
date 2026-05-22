@@ -1325,14 +1325,87 @@ def _resolve_pool_account_credentials(row: sqlite3.Row, *, force_login: bool = F
     }
 
 
+def _clear_pool_account_oauth_session(account_id: str) -> None:
+    """清空已缓存的 ChatGPT token，强制走完整登录（等同重新导入后的登录流程）。"""
+    row = get_pool_account(account_id)
+    if not row:
+        return
+    oauth = oauth_data_dict(row)
+    for key in (
+        "access_token",
+        "accesstoken",
+        "chatgpt_account_id",
+        "chatgptaccountid",
+        "session_token",
+        "sessiontoken",
+        "id_token",
+        "idtoken",
+    ):
+        oauth.pop(key, None)
+    _persist_oauth_data(account_id, oauth)
+
+
+def ensure_account_proxy_from_pool(account_id: str) -> str:
+    """账号未绑定代理时，从代理池按顺序分配一条。"""
+    row = get_pool_account(account_id)
+    if not row:
+        raise ValueError("账号不存在")
+    current = _account_proxy(row)
+    if current:
+        return current
+    from core.app_settings import get_proxy_pool
+
+    pool = get_proxy_pool()
+    if not pool:
+        return ""
+    assigned = pool[0]
+    with LOCK:
+        conn = _connect()
+        try:
+            conn.execute(
+                "UPDATE pool_accounts SET assigned_proxy = ? WHERE id = ?",
+                (assigned, account_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return assigned
+
+
 def login_pool_account(account_id: str, *, force: bool = True) -> dict[str, Any]:
-    """重新登录并刷新 oauth 缓存（邮箱账号走 OTP 登录，OAuth 账号刷新 token）。"""
+    """完整重新登录：清 token →（必要时）分配代理 → 邮箱 OTP / OAuth 刷新 → 校验额度。"""
     row = get_pool_account(account_id)
     if not row:
         raise ValueError("账号不存在")
 
     started = time.time()
-    credentials = _resolve_pool_account_credentials(row, force_login=force)
+    if force:
+        _clear_pool_account_oauth_session(account_id)
+    proxy_assigned = ensure_account_proxy_from_pool(account_id)
+    row = get_pool_account(account_id)
+    if not row:
+        raise ValueError("账号不存在")
+
+    proxy = _account_proxy(row)
+    from core.app_settings import get_proxy_pool
+
+    if not proxy and get_proxy_pool():
+        raise ValueError("请先在「设置」保存代理池，并在账号详情里选择代理后再登录")
+
+    credentials = _resolve_pool_account_credentials(row, force_login=True)
+    verify_started = time.time()
+    quota = query_chatgpt_quota(
+        credentials["accessToken"],
+        chatgpt_account_id=credentials["chatgptAccountId"],
+        proxy=credentials.get("proxy", proxy),
+    )
+    verify_ms = int((time.time() - verify_started) * 1000)
+    if not quota.get("ok", True):
+        err = str(quota.get("error") or "登录后校验失败").strip()
+        _mark_account_abnormal(account_id, quota=quota, error=err)
+        raise ValueError(err or "登录后校验额度失败（token 可能无效）")
+
+    update_account_quota(account_id, quota)
     payload = {
         "ok": True,
         "accountId": account_id,
@@ -1340,12 +1413,16 @@ def login_pool_account(account_id: str, *, force: bool = True) -> dict[str, Any]
         "accountType": (row["account_type"] or "email").strip().lower(),
         "loginMode": credentials.get("loginMode"),
         "loginMs": credentials.get("loginMs"),
-        "proxyLabel": credentials.get("proxyLabel"),
+        "proxy": proxy or credentials.get("proxy") or "",
+        "proxyLabel": credentials.get("proxyLabel") or _proxy_label(proxy),
+        "proxyAssigned": bool(proxy_assigned),
+        "quotaSummary": quota.get("summary") or quota.get("planType") or "",
+        "verifyMs": verify_ms,
     }
     log_activity(
         category="login",
         action="login.manual",
-        message=f"{row['email']} 登录成功 ({credentials.get('loginMode')})",
+        message=f"{row['email']} 重新登录成功 ({credentials.get('loginMode')})",
         account_id=account_id,
         email=row["email"],
         status="success",

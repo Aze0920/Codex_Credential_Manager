@@ -1430,7 +1430,7 @@ ADMIN_HTML = r"""
       "no such column": "数据库结构异常，请重启服务",
       "unique constraint failed": "数据冲突，请刷新后重试",
       "foreign key constraint failed": "数据关联异常，请刷新后重试",
-      "http error 403": "HTTP 403 禁止访问（登录可能已失效，请点「开始登录」）",
+      "http error 403": "HTTP 403 禁止访问（请确认账号已选代理并点「重新登录」）",
       "http error 401": "HTTP 401 未授权",
       "failed to fetch": "网络请求失败（连接中断或 502）",
     };
@@ -1899,7 +1899,7 @@ ADMIN_HTML = r"""
         ? `\n\n邮箱验证码: ${mailboxOtpByAccount[row.id]}`
         : "";
       if (!row?.testResult) {
-        return `${head}${otpLine}\n\n异常可先点「开始登录」，再「查询额度」或「开始测试」`;
+        return `${head}${otpLine}\n\n异常：先点「重新登录」（等同重新走导入登录），再选代理/查询额度/开始测试`;
       }
       return `${head}${otpLine}\n\n${formatTestResult({ testStatus: row.testStatus, result: row.testResult }, { includeQuota: false })}`;
     }
@@ -2026,7 +2026,7 @@ ADMIN_HTML = r"""
           </div>
           <div class="controls" style="margin-top:0;">
             <button class="button primary inline-run-test-btn" data-account-id="${row.id}">开始测试</button>
-            <button class="button inline-login-btn" data-account-id="${row.id}">开始登录</button>
+            <button class="button inline-login-btn" data-account-id="${row.id}" title="清空旧 token，按导入时同样流程重新登录（OTP+校验），需已配置代理">重新登录</button>
             <button class="button inline-query-quota-btn" data-account-id="${row.id}">查询额度</button>
             ${accountCanLinkMailbox(row) ? `<button class="button inline-open-mailbox-btn" data-account-id="${row.id}">绑定 Outlook 凭证</button>` : ""}
             ${accountCanUpdateMailbox(row) ? `<button class="button inline-open-mailbox-btn" data-account-id="${row.id}">更新 Outlook 凭证</button>` : ""}
@@ -2165,8 +2165,12 @@ ADMIN_HTML = r"""
     function toggleAccountExpand(row) {
       if (!row) return;
       testingAccount = testingAccount && testingAccount.id === row.id ? null : row;
-      if (testingAccount) sessionStorage.setItem(EXPANDED_ACCOUNT_KEY, testingAccount.id);
-      else sessionStorage.removeItem(EXPANDED_ACCOUNT_KEY);
+      if (testingAccount) {
+        sessionStorage.setItem(EXPANDED_ACCOUNT_KEY, testingAccount.id);
+        loadTestOptions().catch(() => {});
+      } else {
+        sessionStorage.removeItem(EXPANDED_ACCOUNT_KEY);
+      }
       renderAccounts({ items: listState.lastAccounts || [], ...(listState.accountsMeta || {}) });
     }
 
@@ -2472,12 +2476,18 @@ ADMIN_HTML = r"""
         method: "POST",
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
+      const data = await readAdminJson(res, "保存设置失败");
       if (!res.ok) throw new Error(data.error || "保存设置失败");
       $("setting-password").value = "";
       $("setting-password-confirm").value = "";
       await loadSettings();
       await loadTestOptions();
+      await loadAccounts().catch(() => {});
+      const settings = data.settings || data;
+      const backfill = Number(settings.proxiesBackfilled ?? 0);
+      if (backfill > 0) {
+        showToast(`设置已保存，已为 ${backfill} 个未绑定账号分配代理`, "success", 4000);
+      }
       return data;
     }
 
@@ -2681,12 +2691,15 @@ ADMIN_HTML = r"""
 
     function formatLoginResult(data) {
       if (!data?.ok) return `登录失败: ${data?.error || "未知错误"}`;
-      return [
-        "登录成功",
+      const lines = [
+        "重新登录成功（已校验额度）",
         `方式: ${formatLoginMode(data.loginMode)}`,
         `耗时: ${data.loginMs ?? "-"}ms`,
         `代理: ${data.proxyLabel || "-"}`,
-      ].join("\n");
+      ];
+      if (data.proxyAssigned) lines.push("已从代理池自动绑定代理");
+      if (data.quotaSummary) lines.push(`额度: ${data.quotaSummary}`);
+      return lines.join("\n");
     }
 
     async function runAccountLogin(accountId) {
@@ -2704,7 +2717,11 @@ ADMIN_HTML = r"""
       }
       if (resultBox) resultBox.textContent = formatLoginResult(data);
       await loadAccounts();
-      showToast(`登录成功：${formatLoginMode(data.loginMode)}`, "success", 2500);
+      showToast(
+        `重新登录成功${data.proxyAssigned ? "（已自动绑定代理）" : ""}：${formatLoginMode(data.loginMode)}`,
+        "success",
+        3500,
+      );
       return data;
     }
 

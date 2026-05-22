@@ -2849,7 +2849,13 @@ def admin_save_settings():
             "modelCount": len(data.get("models") or []),
         },
     )
-    return jsonify({"ok": True, "settings": data})
+    return jsonify(
+        {
+            "ok": True,
+            "settings": data,
+            "proxiesBackfilled": data.get("proxiesBackfilled", 0),
+        }
+    )
 
 
 @app.post("/api/admin/accounts/import")

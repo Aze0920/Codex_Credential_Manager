@@ -73,7 +73,7 @@ _TECH_ZH: dict[str, str] = {
     "no such column": "数据库结构异常，请重启服务",
     "unique constraint failed": "数据冲突，请刷新后重试",
     "foreign key constraint failed": "数据关联异常，请刷新后重试",
-    "http error 403": "HTTP 403 禁止访问（登录可能已失效，请点「开始登录」）",
+    "http error 403": "HTTP 403 禁止访问（请确认账号已选代理并点「重新登录」）",
     "http error 401": "HTTP 401 未授权（请重新登录或刷新 token）",
     "http error 429": "HTTP 429 请求过于频繁，请稍后再试",
     "http error 500": "HTTP 500 上游服务错误",
