@@ -2,6 +2,12 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.20] - 2026-05-22
+
+### 修复
+
+- 服务器 `git fetch origin main` 后须 `reset --hard FETCH_HEAD`（不能只用 `origin/main`，否则会卡在旧提交如 1.0.18）。
+
 ## [1.0.19] - 2026-05-22
 
 ### 修复

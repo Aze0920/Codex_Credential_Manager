@@ -85,15 +85,14 @@ Write-Step 'git status'
 git status --short
 $porcelain = git status --porcelain
 if (-not $porcelain) {
-    Write-Ok 'Nothing to commit'
-    exit 0
-}
-
-Write-Step "git commit: $CommitMessage"
-& git commit -m $CommitMessage
-if ($LASTEXITCODE -ne 0) {
-    Write-Err 'Commit failed. Run setup-github-once.bat'
-    exit 1
+    Write-Warn 'Nothing to commit (will still push to sync remote)'
+} else {
+    Write-Step "git commit: $CommitMessage"
+    & git commit -m $CommitMessage
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err 'Commit failed. Run setup-github-once.bat'
+        exit 1
+    }
 }
 
 git branch -M $Branch 2>$null

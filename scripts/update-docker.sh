@@ -39,6 +39,7 @@ git config --global --add safe.directory "$DIR" 2>/dev/null || true
 if ! git fetch origin main >>"$LOG" 2>&1; then
   fail "git fetch 失败（请检查服务器能否访问 GitHub）"
 fi
+# 必须用 FETCH_HEAD：仅 fetch 分支时 origin/main 可能仍是旧提交
 if ! git reset --hard FETCH_HEAD >>"$LOG" 2>&1; then
   fail "git reset 失败"
 fi
