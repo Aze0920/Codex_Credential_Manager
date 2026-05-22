@@ -5,6 +5,7 @@ set -eu
 
 DIR="${HOST_INSTALL_DIR:-/work}"
 LOG="${UPDATE_LOG_FILE:-$DIR/data/update-latest.log}"
+MAIN_CONTAINER="codex-credential-manager"
 COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-codex}"
 
 log() { echo "$*" >>"$LOG"; }
@@ -24,9 +25,9 @@ if [ ! -x /usr/local/bin/docker-compose ]; then fail "未挂载 docker-compose";
 export DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"
 export GIT_TERMINAL_PROMPT=0
 
-if ! command -v git >/dev/null 2>&1 || ! command -v wget >/dev/null 2>&1; then
-  progress 5 "安装 git、wget…"
-  apk add --no-cache git wget >/dev/null 2>&1 || fail "无法安装依赖"
+if ! command -v git >/dev/null 2>&1; then
+  progress 5 "安装 git…"
+  apk add --no-cache git >/dev/null 2>&1 || fail "无法安装 git"
 fi
 
 cd "$DIR" || fail "无法进入 $DIR"
@@ -51,22 +52,16 @@ VER="$(head -1 VERSION 2>/dev/null || echo ?)"
 progress 45 "代码已同步到 v${VER}"
 log "[ok] synced $VER"
 
-# 先 build、后切换：避免 compose down 导致长时间 502（旧容器在 build 期间仍在线）
-progress 52 "后台构建镜像（旧服务仍在运行，此阶段无 502）"
-export COMPOSE_DOCKER_CLI_BUILD=1
-export DOCKER_BUILDKIT=1
-log "[build] docker compose build codex-web"
-if ! /usr/local/bin/docker-compose -f docker-compose.yml -p "$COMPOSE_PROJECT" build codex-web >>"$LOG" 2>&1; then
-  fail "镜像构建失败"
+progress 50 "停止旧容器"
+/usr/local/bin/docker-compose -f docker-compose.yml -p "$COMPOSE_PROJECT" down --remove-orphans >>"$LOG" 2>&1 || true
+/usr/local/bin/docker rm -f "$MAIN_CONTAINER" >>"$LOG" 2>&1 || true
+
+progress 60 "正在 build 并启动（请耐心等待）"
+if ! /usr/local/bin/docker-compose -f docker-compose.yml -p "$COMPOSE_PROJECT" up -d --build --force-recreate --remove-orphans >>"$LOG" 2>&1; then
+  fail "docker compose up 失败"
 fi
 
-progress 72 "切换新容器（约 10–40 秒 502，属正常）"
-log "[up] docker compose up codex-web --force-recreate"
-if ! /usr/local/bin/docker-compose -f docker-compose.yml -p "$COMPOSE_PROJECT" up -d --no-deps --force-recreate codex-web >>"$LOG" 2>&1; then
-  fail "容器启动失败"
-fi
-
-progress 88 "等待新服务就绪"
+progress 92 "等待服务就绪"
 ok=0
 i=0
 while [ "$i" -lt 60 ]; do
