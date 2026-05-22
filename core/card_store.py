@@ -593,6 +593,12 @@ def _apply_import_remark(records: list[dict[str, Any]], remark: str | None) -> N
             record["remark"] = text
 
 
+def _pool_account_is_assigned(row: sqlite3.Row | None) -> bool:
+    if not row:
+        return False
+    return str(row["status"] or "").strip().lower() == "assigned"
+
+
 def _build_provision_detail(
     *,
     account_id: str,
@@ -633,12 +639,38 @@ def provision_pool_account_steps(
     *,
     model: str | None = None,
     message: str | None = None,
+    interaction: str = "auto",
 ) -> Iterator[dict[str, Any]]:
     row = get_pool_account(account_id)
     if not row:
         raise ValueError("账号不存在")
 
     account_type = (row["account_type"] or "email").strip().lower()
+    email = row["email"]
+    if _pool_account_is_assigned(row) and str(interaction or "").strip().lower() != "manual":
+        skip_result = {
+            "ok": True,
+            "skipped": True,
+            "message": "账号已分配，跳过自动检测与额度查询",
+        }
+        skip_detail = _build_provision_detail(
+            account_id=account_id,
+            email=email,
+            account_type=account_type,
+            test_status="skipped",
+            result=skip_result,
+            quota=None,
+            ok=True,
+        )
+        yield {
+            "step": "done",
+            "detail": skip_detail,
+            "testStatus": "skipped",
+            "result": skip_result,
+            "skipped": True,
+            "reason": skip_result["message"],
+        }
+        return
     try:
         from core.app_settings import get_test_settings
 
@@ -652,7 +684,6 @@ def provision_pool_account_steps(
         allowed_models = None
     test_model = normalize_test_model(model or default_model, allowed=allowed_models)
     test_message = (message or default_message).strip() or default_message
-    email = row["email"]
     provision_started = time.time()
 
     log_activity(
@@ -1021,13 +1052,16 @@ def _mark_account_pending(account_id: str) -> None:
 
 
 def _run_background_provision(account_id: str) -> None:
+    row = get_pool_account(account_id)
+    if _pool_account_is_assigned(row):
+        return
     update_account_test(
         account_id,
         status="running",
         result={"ok": False, "message": "后台检测中"},
     )
     try:
-        for event in provision_pool_account_steps(account_id):
+        for event in provision_pool_account_steps(account_id, interaction="auto"):
             if event.get("step") == "done":
                 return
     except Exception as exc:
@@ -1044,6 +1078,9 @@ def enqueue_provision_accounts(account_ids: list[str]) -> None:
         return
     executor = _get_provision_executor()
     for account_id in account_ids:
+        row = get_pool_account(account_id)
+        if _pool_account_is_assigned(row):
+            continue
         _mark_account_pending(account_id)
         executor.submit(_run_background_provision, account_id)
 
@@ -1646,7 +1683,7 @@ def login_pool_account(
     }
 
     if auto_follow_up:
-        test_payload = test_pool_account(account_id, model=model, message=message)
+        test_payload = test_pool_account(account_id, model=model, message=message, source="manual")
         payload["test"] = test_payload
         payload["testStatus"] = test_payload.get("testStatus")
         payload["testOk"] = str(test_payload.get("testStatus") or "").lower() == "success"
@@ -1664,10 +1701,20 @@ def login_pool_account(
     return payload
 
 
-def query_pool_account_quota(account_id: str) -> dict[str, Any]:
+def query_pool_account_quota(account_id: str, *, source: str = "manual") -> dict[str, Any]:
     row = get_pool_account(account_id)
     if not row:
         raise ValueError("账号不存在")
+
+    if str(source or "").strip().lower() == "auto" and _pool_account_is_assigned(row):
+        return {
+            "ok": False,
+            "skipped": True,
+            "accountId": account_id,
+            "email": row["email"],
+            "accountType": (row["account_type"] or "email").strip().lower(),
+            "reason": "账号已分配，跳过自动额度查询",
+        }
 
     credentials = _resolve_pool_account_credentials(row)
     quota = query_chatgpt_quota(
@@ -2009,6 +2056,7 @@ def _login_email_account_for_test(row: sqlite3.Row, *, proxy: str = "") -> dict[
 
 
 def list_auto_test_account_ids() -> list[str]:
+    """定时/批量自动测试用的账号列表（排除已分配给卡密的账号）。"""
     with LOCK:
         conn = _connect()
         try:
@@ -2016,6 +2064,7 @@ def list_auto_test_account_ids() -> list[str]:
                 """
                 SELECT id FROM pool_accounts
                 WHERE coalesce(test_status, '') != 'running'
+                  AND lower(coalesce(status, '')) != 'assigned'
                 ORDER BY pool_type ASC, created_at ASC
                 """
             ).fetchall()
@@ -2035,9 +2084,25 @@ def test_pool_account(
     if not row:
         raise ValueError("账号不存在")
 
+    interaction = "manual" if str(source or "").strip().lower() == "manual" else "auto"
+    if interaction == "auto" and _pool_account_is_assigned(row):
+        return {
+            "ok": False,
+            "skipped": True,
+            "accountId": account_id,
+            "email": row["email"],
+            "testStatus": "skipped",
+            "reason": "账号已分配，跳过自动检测与额度查询",
+        }
+
     account_type = (row["account_type"] or "email").strip().lower()
     last_event: dict[str, Any] | None = None
-    for event in provision_pool_account_steps(account_id, model=model, message=message):
+    for event in provision_pool_account_steps(
+        account_id,
+        model=model,
+        message=message,
+        interaction=interaction,
+    ):
         if event.get("step") == "done":
             last_event = event
     if not last_event:

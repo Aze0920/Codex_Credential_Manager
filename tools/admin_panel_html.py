@@ -281,6 +281,9 @@ ADMIN_HTML = r"""
     .col-check input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
     tr.data-row { cursor: pointer; transition: background 0.15s ease; }
     tr.data-row.row-selected { background: rgba(79, 70, 229, 0.1); box-shadow: inset 3px 0 0 var(--blue); }
+    tr.data-row.row-busy { background: rgba(79, 124, 255, 0.12); box-shadow: inset 3px 0 0 var(--teal); }
+    tr.data-row.row-busy .account-email-copy { color: #0f766e; font-weight: 600; }
+    .inline-login-btn.is-busy { opacity: 0.85; pointer-events: none; }
     tr.account-detail-row td { padding: 0; background: rgba(248, 250, 255, 0.92); }
     .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
     .pill {
@@ -1209,7 +1212,7 @@ ADMIN_HTML = r"""
               <li><strong>双池管理：</strong>PP 池（Codex-P）与 GO 池（Codex-G）账号、卡密独立统计与分发。</li>
               <li><strong>卡密取号：</strong>前台用户输入卡密后自动分配测试通过的可用账号，并可在浏览器本地登录、读验证码、导出 Session。</li>
               <li><strong>账号导入：</strong>支持 Outlook 四段素材、OAuth 授权、Refresh Token、Mobile RT、Codex JSON / Access Token 等多种方式。</li>
-              <li><strong>自动检测：</strong>导入后自动登录、查额度、跑模型测试；后台可设置定时全量自动测试。</li>
+              <li><strong>自动检测：</strong>导入后自动登录、查额度、跑模型测试；定时/立即自动测试仅针对<strong>未分配</strong>账号。已分配账号不会自动检测、不会自动查额度，请在详情里手动「开始测试」「查询额度」「重新登录」。</li>
               <li><strong>Session 导出：</strong>支持 sub2api、cpa、cockpit、9router、axonhub 等格式。</li>
               <li><strong>对外 API：</strong>提供可重置密钥的网关，按 OpenAI 兼容路径转发到 OpenAI、Codex、OpenRouter、Groq 等上游。</li>
             </ul>
@@ -1381,6 +1384,7 @@ ADMIN_HTML = r"""
     const reauthModes = {};
     let mailboxOpenAccountId = "";
     let mailboxBusyAccountId = "";
+    let loginBusyAccountId = "";
     const mailboxOtpByAccount = {};
     let selectedAccountId = "";
     const selectedAccountIds = new Set();
@@ -1720,7 +1724,19 @@ ADMIN_HTML = r"""
       return false;
     }
 
+    function isAccountLoginBusy(row) {
+      return Boolean(loginBusyAccountId && row && row.id === loginBusyAccountId);
+    }
+
+    function setLoginBusy(accountId, busy) {
+      loginBusyAccountId = busy ? accountId : "";
+      if (listState.lastAccounts?.length) {
+        renderAccounts({ items: listState.lastAccounts, ...(listState.accountsMeta || {}) });
+      }
+    }
+
     function accountPoolStatus(row) {
+      if (isAccountLoginBusy(row)) return { label: "登录中", className: "running" };
       if (row.status === "assigned") return { label: "已分配", className: "assigned" };
       if (row.testStatus === "pending" || row.testStatus === "running") return { label: "检测中", className: "running" };
       if (accountIsAbnormal(row)) return { label: "异常", className: "failed" };
@@ -1729,7 +1745,9 @@ ADMIN_HTML = r"""
     }
 
     function hasPendingAccounts(rows) {
-      return (rows || []).some((row) => row.testStatus === "pending" || row.testStatus === "running");
+      return (rows || []).some(
+        (row) => row.status !== "assigned" && (row.testStatus === "pending" || row.testStatus === "running"),
+      );
     }
 
     function scheduleAccountPolling() {
@@ -1747,7 +1765,18 @@ ADMIN_HTML = r"""
       }, 2500);
     }
 
+    function accountTestStatusLabel(row) {
+      if (isAccountLoginBusy(row)) return "登录中";
+      return testStatusLabel(row.testStatus);
+    }
+
+    function accountTestStatusClass(row) {
+      if (isAccountLoginBusy(row)) return "running";
+      return testStatusClass(row.testStatus);
+    }
+
     function quotaSummary(row) {
+      if (isAccountLoginBusy(row)) return "登录中";
       if (row?.testStatus === "pending" || row?.testStatus === "running") return "检测中";
       const quota = row.quota;
       if (!quota) return "-";
@@ -2046,7 +2075,7 @@ ADMIN_HTML = r"""
           </div>
           <div class="controls" style="margin-top:0;">
             <button class="button primary inline-run-test-btn" data-account-id="${row.id}">开始测试</button>
-            <button class="button inline-login-btn" data-account-id="${row.id}" title="清空旧 token，按导入时同样流程重新登录（OTP+校验），需已配置代理">重新登录</button>
+            <button class="button inline-login-btn${loginBusyAccountId === row.id ? " is-busy" : ""}" data-account-id="${row.id}" title="清空旧 token，按导入时同样流程重新登录（OTP+校验），需已配置代理" ${loginBusyAccountId === row.id ? "disabled" : ""}>${loginBusyAccountId === row.id ? "登录中…" : "重新登录"}</button>
             <button class="button inline-query-quota-btn" data-account-id="${row.id}">查询额度</button>
             ${accountCanLinkMailbox(row) ? `<button class="button inline-open-mailbox-btn" data-account-id="${row.id}">绑定 Outlook 凭证</button>` : ""}
             ${accountCanUpdateMailbox(row) ? `<button class="button inline-open-mailbox-btn" data-account-id="${row.id}">更新 Outlook 凭证</button>` : ""}
@@ -2229,15 +2258,16 @@ ADMIN_HTML = r"""
       $("accounts-table").innerHTML = rows.length ? rows.map((row) => {
         const expanded = testingAccount && testingAccount.id === row.id;
         const selected = selectedAccountId === row.id || selectedAccountIds.has(row.id);
+        const loginBusy = isAccountLoginBusy(row);
         const poolStatus = accountPoolStatus(row);
         return `
-        <tr class="data-row account-row ${selected ? "row-selected" : ""}" data-account-row="${row.id}">
+        <tr class="data-row account-row ${selected ? "row-selected" : ""}${loginBusy ? " row-busy" : ""}" data-account-row="${row.id}">
           <td class="col-check"><input type="checkbox" class="account-check" data-account-id="${row.id}" ${selectedAccountIds.has(row.id) ? "checked" : ""}></td>
           <td><span class="account-email-copy mono" data-copy-email="${escapeAttr(row.email)}" title="点击复制邮箱">${escapeHtml(row.email)}</span></td>
           <td>${accountTypeLabel(row.accountType)} · ${groupNameLabel(row.groupName)}</td>
           <td><span class="pill ${poolStatus.className}">${poolStatus.label}</span></td>
           <td class="quota-text">${quotaSummary(row)}${resolvePlanType(row) ? ` · ${formatPlanTypeLabel(resolvePlanType(row))}` : ""}</td>
-          <td><span class="pill ${testStatusClass(row.testStatus)}">${testStatusLabel(row.testStatus)}</span></td>
+          <td><span class="pill ${accountTestStatusClass(row)}">${accountTestStatusLabel(row)}</span></td>
           <td class="mono">${row.cardCode || "-"}</td>
           <td>${formatDisplayTime(row.createdAt, "-")}</td>
           <td>${formatDisplayTime(row.assignedAt, "-")}</td>
@@ -2271,10 +2301,10 @@ ADMIN_HTML = r"""
       if (!box) return;
       const interval = Number(settings.autoTestIntervalHours || 0);
       if (interval <= 0) {
-        box.textContent = "已关闭 · 与账号「开始测试」相同，测试全部 PP/GO 账号";
+        box.textContent = "已关闭 · 仅未分配账号会自动检测/查额度；已分配请手动操作";
         return;
       }
-      const parts = [`每 ${interval} 小时执行一次`];
+      const parts = [`每 ${interval} 小时执行一次（跳过已分配账号）`];
       if (settings.autoTestRunning) parts.push("当前正在自动测试中…");
       if (settings.autoTestLastRunAt) parts.push(`上次：${formatDisplayTime(settings.autoTestLastRunAt, "-")}`);
       if (settings.autoTestNextRunAt) {
@@ -2337,7 +2367,7 @@ ADMIN_HTML = r"""
         const res = await adminFetch("/api/admin/auto-test/run", { method: "POST", body: "{}" });
         const data = await readAdminJson(res, "启动测试失败");
         if (!res.ok) throw new Error(data.error || data.reason || "启动测试失败");
-        showToast(data.message || "已开始测试全部账号", "success", 3000);
+        showToast(data.message || "已开始测试未分配账号", "success", 3000);
         await loadSettings();
         startAutoTestPoll();
       } catch (error) {
@@ -2766,13 +2796,19 @@ ADMIN_HTML = r"""
     }
 
     async function runAccountLogin(accountId) {
+      if (loginBusyAccountId && loginBusyAccountId !== accountId) {
+        showToast("已有账号正在重新登录，请稍候", "error", 2500);
+        return;
+      }
       const resultBox = document.querySelector(`.inline-test-result[data-account-id="${accountId}"]`);
       const model = document.querySelector(`.inline-test-model[data-account-id="${accountId}"]`)?.value;
       const message = document.querySelector(`.inline-test-message[data-account-id="${accountId}"]`)?.value;
       const proxy = document.querySelector(`.inline-test-proxy[data-account-id="${accountId}"]`)?.value ?? "";
+      setLoginBusy(accountId, true);
       if (resultBox) {
         resultBox.textContent = "重新登录中（等同重新导入：清 token、刷新素材、走 OTP）…\n成功后将自动查额度并测试";
       }
+      try {
       const res = await adminFetch("/api/admin/accounts/login", {
         method: "POST",
         body: JSON.stringify({
@@ -2801,6 +2837,9 @@ ADMIN_HTML = r"""
         4500,
       );
       return data;
+      } finally {
+        setLoginBusy(accountId, false);
+      }
     }
 
     async function runAccountQuota(accountId) {

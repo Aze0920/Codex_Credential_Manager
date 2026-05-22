@@ -97,14 +97,19 @@ def request_auto_test_now() -> dict[str, Any]:
     account_ids = list_auto_test_account_ids()
     total = len(account_ids)
     if total <= 0:
-        return {"ok": False, "error": "账号池为空，无可测试账号"}
+        return {"ok": False, "error": "没有可自动测试的账号（已分配账号需在各账号详情里手动测试）"}
     threading.Thread(
         target=run_auto_test_cycle,
         kwargs={"trigger": "manual"},
         daemon=True,
         name="auto-test-manual",
     ).start()
-    return {"ok": True, "started": True, "total": total, "message": f"已开始测试 {total} 个账号"}
+    return {
+        "ok": True,
+        "started": True,
+        "total": total,
+        "message": f"已开始测试 {total} 个未分配账号（已分配账号不会参与）",
+    }
 
 
 def run_auto_test_cycle(*, trigger: str = "schedule") -> dict[str, Any]:
@@ -121,7 +126,7 @@ def run_auto_test_cycle(*, trigger: str = "schedule") -> dict[str, Any]:
         log_activity(
             category="test",
             action="auto_test.start",
-            message=f"开始自动测试，共 {total} 个账号",
+            message=f"开始自动测试，共 {total} 个未分配账号（已分配账号已跳过）",
             status="running",
             detail={"trigger": trigger, "total": total},
         )
@@ -130,6 +135,8 @@ def run_auto_test_cycle(*, trigger: str = "schedule") -> dict[str, Any]:
                 break
             try:
                 result = test_pool_account(account_id, source="auto")
+                if result.get("skipped"):
+                    continue
                 if str(result.get("testStatus") or "").strip().lower() == "success":
                     success += 1
                 else:
