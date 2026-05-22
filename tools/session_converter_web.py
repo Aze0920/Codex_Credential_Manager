@@ -80,7 +80,7 @@ from core.app_settings import (
     get_test_settings,
     update_settings,
 )
-from core.auto_test_scheduler import start_auto_test_scheduler
+from core.auto_test_scheduler import request_auto_test_now, start_auto_test_scheduler
 from core.api_errors import get_request_lang, public_error_message
 from core.api_gateway import (
     extract_bearer_token,
@@ -2737,6 +2737,26 @@ def admin_test_proxy_pool():
         detail=data,
     )
     return jsonify(data)
+
+
+@app.post("/api/admin/auto-test/run")
+def admin_run_auto_test_now():
+    denied = admin_required()
+    if denied:
+        return denied
+    result = request_auto_test_now()
+    if result.get("ok"):
+        log_activity(
+            category="test",
+            action="auto_test.manual",
+            message=result.get("message") or "手动触发立即测试",
+            status="running",
+            detail={"total": result.get("total")},
+        )
+        return jsonify(result)
+    if result.get("skipped"):
+        return jsonify(result), 409
+    return jsonify(result), 400
 
 
 @app.get("/api/admin/settings")

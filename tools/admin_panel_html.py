@@ -1118,7 +1118,10 @@ ADMIN_HTML = r"""
               <input id="setting-password-confirm" type="password" placeholder="再次输入新密码">
             </div>
             <div class="field">
-              <label for="setting-auto-test-interval">自动测试</label>
+              <div class="field-label-row">
+                <label for="setting-auto-test-interval">自动测试</label>
+                <button class="button small" id="auto-test-now-btn" type="button">立即测试</button>
+              </div>
               <select id="setting-auto-test-interval">
                 <option value="0">关闭</option>
               </select>
@@ -1331,6 +1334,7 @@ ADMIN_HTML = r"""
 
     let activeTab = readTabFromLocation();
     let logsPollTimer = null;
+    let autoTestPollTimer = null;
     const logState = { page: 1, pageSize: 100 };
     let importAccountType = "email";
     let oauthMethod = "manual";
@@ -2206,6 +2210,12 @@ ADMIN_HTML = r"""
 
     function renderAutoTestStatus(settings) {
       const box = $("auto-test-status");
+      const btn = $("auto-test-now-btn");
+      if (btn) {
+        const running = !!settings.autoTestRunning;
+        btn.disabled = running;
+        btn.textContent = running ? "测试中…" : "立即测试";
+      }
       if (!box) return;
       const interval = Number(settings.autoTestIntervalHours || 0);
       if (interval <= 0) {
@@ -2224,6 +2234,67 @@ ADMIN_HTML = r"""
       }
       if (settings.autoTestLastSummary) parts.push(`结果：${settings.autoTestLastSummary}`);
       box.textContent = parts.join(" · ");
+    }
+
+    function stopAutoTestPoll() {
+      if (autoTestPollTimer) {
+        clearInterval(autoTestPollTimer);
+        autoTestPollTimer = null;
+      }
+    }
+
+    function startAutoTestPoll() {
+      stopAutoTestPoll();
+      autoTestPollTimer = setInterval(async () => {
+        try {
+          const res = await adminFetch("/api/admin/settings");
+          const settings = await readAdminJson(res, "刷新状态失败");
+          if (!res.ok) return;
+          renderAutoTestStatus(settings);
+          const btn = $("auto-test-now-btn");
+          if (settings.autoTestRunning) {
+            if (btn) {
+              btn.disabled = true;
+              btn.textContent = "测试中…";
+            }
+            return;
+          }
+          stopAutoTestPoll();
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = "立即测试";
+          }
+          if (settings.autoTestLastSummary) {
+            showToast(`测试完成：${settings.autoTestLastSummary}`, "success", 4000);
+          }
+          await loadAccounts().catch(() => {});
+        } catch {
+          /* 轮询静默失败 */
+        }
+      }, 2500);
+    }
+
+    async function runAutoTestNow() {
+      const button = $("auto-test-now-btn");
+      if (button?.disabled) return;
+      if (button) {
+        button.disabled = true;
+        button.textContent = "启动中…";
+      }
+      try {
+        const res = await adminFetch("/api/admin/auto-test/run", { method: "POST", body: "{}" });
+        const data = await readAdminJson(res, "启动测试失败");
+        if (!res.ok) throw new Error(data.error || data.reason || "启动测试失败");
+        showToast(data.message || "已开始测试全部账号", "success", 3000);
+        await loadSettings();
+        startAutoTestPoll();
+      } catch (error) {
+        showToast(error.message || "启动测试失败", "error");
+        if (button) {
+          button.disabled = false;
+          button.textContent = "立即测试";
+        }
+      }
     }
 
     function renderApiSettings(settings) {
@@ -3408,6 +3479,10 @@ ADMIN_HTML = r"""
         $("settings-status").textContent = localizeAdminError(error.message, "保存失败");
         showToast(error.message || "保存失败", "error");
       }
+    });
+
+    $("auto-test-now-btn")?.addEventListener("click", () => {
+      runAutoTestNow().catch((error) => showToast(error.message || "启动测试失败", "error"));
     });
 
     $("test-proxy-btn").addEventListener("click", () => {

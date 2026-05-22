@@ -21,10 +21,7 @@ services:
       GITHUB_REPO: Aze0920/Codex_Credential_Manager
     volumes:
       - ./data:/app/data
-      # 勿单独挂载 VERSION 文件（宿主机若误建成目录会导致 compose 启动失败）；由 entrypoint 从 /host-codex/VERSION 同步
-      - ./core:/app/core:ro
-      - ./tools:/app/tools:ro
-      # 勿挂载 ./scripts 到 /app/scripts，会覆盖镜像内 entrypoint 导致容器 Restarting(2)
+      # 业务代码用镜像内 /app（勿挂载 ./tools ./core ./scripts，空目录或不完整会覆盖镜像导致启动失败）
       - .:/host-codex
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:

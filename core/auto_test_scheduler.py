@@ -90,6 +90,23 @@ def get_runtime_status() -> dict[str, Any]:
     }
 
 
+def request_auto_test_now() -> dict[str, Any]:
+    """立即跑一轮全量测试（后台线程，不阻塞 HTTP）。"""
+    if _cycle_running:
+        return {"ok": False, "skipped": True, "reason": "已有自动测试任务在运行"}
+    account_ids = list_auto_test_account_ids()
+    total = len(account_ids)
+    if total <= 0:
+        return {"ok": False, "error": "账号池为空，无可测试账号"}
+    threading.Thread(
+        target=run_auto_test_cycle,
+        kwargs={"trigger": "manual"},
+        daemon=True,
+        name="auto-test-manual",
+    ).start()
+    return {"ok": True, "started": True, "total": total, "message": f"已开始测试 {total} 个账号"}
+
+
 def run_auto_test_cycle(*, trigger: str = "schedule") -> dict[str, Any]:
     global _last_summary
     if not _cycle_lock.acquire(blocking=False):
