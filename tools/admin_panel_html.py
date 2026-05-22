@@ -2898,7 +2898,7 @@ ADMIN_HTML = r"""
       const canRunUpdate = !!(remoteChecked && info.selfUpdateEnabled && info.updateAvailable && envReady);
       const updateTip = !info.selfUpdateEnabled
         ? "未启用 ENABLE_SELF_UPDATE"
-        : (!envReady ? (readiness.issues || []).join("；") : (info.updateAvailable ? "拉取 GitHub 并重建容器" : (info.upToDate ? "已是最新，无需更新" : "暂无法确认是否有新版本")));
+        : (!envReady ? (readiness.issues || []).join("；") : (info.updateAvailable ? "独立更新容器拉代码并重建 Web（期间可能短暂 502）" : (info.upToDate ? "已是最新，无需更新" : "暂无法确认是否有新版本")));
       const updateBtnHtml = `<button class="button primary" type="button" id="version-update-btn"${canRunUpdate ? "" : " disabled"} title="${escapeHtml(updateTip)}">一键更新</button>`;
       const bodyHtml = [
         `<div class="version-row"><span>当前版本</span><strong>v${escapeHtml(info.version)}</strong></div>`,
@@ -2994,8 +2994,27 @@ ADMIN_HTML = r"""
       }
     }
 
-    async function pollUpdateStatus({ maxRounds = 200 } = {}) {
+    async function waitServiceHealth({ maxAttempts = 90, intervalMs = 2000 } = {}) {
+      for (let i = 0; i < maxAttempts; i += 1) {
+        try {
+          const res = await fetch("/api/admin/health");
+          const data = await readAdminJson(res, "健康检查失败");
+          if (res.ok && data.ok) return data;
+        } catch (_) {
+          /* 重建期间 502/连接失败属正常 */
+        }
+        setUpdateProgress(
+          Math.min(99, 92 + Math.floor((i / maxAttempts) * 7)),
+          `服务重启中，请稍候…（${i + 1}/${maxAttempts}，期间可能 502）`
+        );
+        await new Promise((r) => setTimeout(r, intervalMs));
+      }
+      throw new Error("服务启动超时，请 SSH 执行: docker compose -p codex ps && docker compose -p codex logs --tail 30");
+    }
+
+    async function pollUpdateStatus({ maxRounds = 400 } = {}) {
       let rounds = 0;
+      let networkErrors = 0;
       stopUpdatePoll();
       return new Promise((resolve, reject) => {
         const tick = async () => {
@@ -3003,6 +3022,7 @@ ADMIN_HTML = r"""
           try {
             const res = await adminFetch("/api/admin/update/status");
             const data = await readAdminJson(res, "读取更新状态失败");
+            networkErrors = 0;
             renderUpdateStatus(data);
             if (data.state === "success") {
               stopUpdatePoll();
@@ -3019,13 +3039,18 @@ ADMIN_HTML = r"""
               reject(new Error("更新超时，请 SSH 查看 data/update-latest.log"));
             }
           } catch (error) {
+            networkErrors += 1;
+            setUpdateProgress(
+              Math.min(95, 55 + networkErrors),
+              `服务重启中（暂时无法连接，502 正常）… 请勿刷新关闭`
+            );
             if (rounds >= maxRounds) {
               stopUpdatePoll();
               reject(error);
             }
           }
         };
-        updatePollTimer = setInterval(() => tick().catch(() => {}), 1500);
+        updatePollTimer = setInterval(() => tick().catch(() => {}), 2000);
         tick().catch(() => {});
       });
     }
@@ -3049,7 +3074,7 @@ ADMIN_HTML = r"""
         logEl.hidden = false;
         logEl.textContent = "";
       }
-      setUpdateProgress(0, "正在启动更新任务…");
+      setUpdateProgress(0, "正在启动独立更新容器（不会在本容器内执行更新）…");
       try {
         const res = await adminFetch("/api/admin/update/run", { method: "POST", body: "{}" });
         const data = await readAdminJson(res, "启动更新失败");
@@ -3059,8 +3084,10 @@ ADMIN_HTML = r"""
         showToast(data.alreadyRunning ? "更新任务进行中" : "更新已开始", "success", 2000);
         const final = await pollUpdateStatus();
         if (logEl && final.log) logEl.textContent = final.log;
+        setUpdateProgress(96, "更新完成，等待服务恢复…");
+        await waitServiceHealth();
         setUpdateProgress(100, "更新完成");
-        showToast("更新完成，如页面无响应请 Ctrl+F5 刷新", "success", 4000);
+        showToast("更新完成，页面已恢复", "success", 4000);
         setTimeout(() => {
           loadVersionBadge().catch(() => {});
           refreshVersionModal(false).catch(() => {});

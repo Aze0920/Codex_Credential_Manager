@@ -1,128 +1,82 @@
-#!/usr/bin/env bash
-# Docker 一键更新：git 同步 + 独立任务容器执行 compose（需容器内 docker CLI + docker.sock）
-set -u
+#!/bin/sh
+# 在独立容器 codex-update-job 中执行（由后台 API 启动，不占用 Web 容器进程）
+# 顺序：git pull → compose 重建 → 健康检查
+set -eu
 
-DIR="${HOST_INSTALL_DIR:-${INSTALL_DIR:-/host-codex}}"
+DIR="${HOST_INSTALL_DIR:-/work}"
 LOG="${UPDATE_LOG_FILE:-$DIR/data/update-latest.log}"
-JOB_NAME="codex-update-job"
 MAIN_CONTAINER="codex-credential-manager"
+COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-codex}"
 
-log_line() { echo "$*" >>"$LOG"; }
-fail() { log_line "[error] $*"; echo "[error] $*"; exit 1; }
-progress() { log_line "[progress] $1|$2"; echo "[progress] $1|$2"; }
+log() { echo "$*" >>"$LOG"; }
+progress() { log "[progress] $1|$2"; }
+fail() { log "[error] $*"; exit 1; }
 
 mkdir -p "$(dirname "$LOG")" "$DIR/data/backups"
 : >"$LOG"
-progress 2 "开始更新"
+progress 2 "更新任务已启动"
+log "[update-docker] runner=$(hostname) DIR=$DIR"
 
-log_line "[update-docker] DIR=$DIR"
-echo "[update-docker] DIR=$DIR"
+if [ ! -d "$DIR/.git" ]; then fail "不是 git 仓库: $DIR"; fi
+if [ ! -S /var/run/docker.sock ]; then fail "未挂载 docker.sock"; fi
+if [ ! -f "$DIR/docker-compose.yml" ]; then fail "缺少 docker-compose.yml"; fi
+if [ ! -x /usr/local/bin/docker-compose ]; then fail "未挂载 docker-compose"; fi
 
-if [[ ! -d "$DIR" ]]; then
-  fail "项目目录不存在: $DIR（需挂载 .:/host-codex）"
-fi
-if [[ ! -d "$DIR/.git" ]]; then
-  fail "不是 git 仓库: $DIR"
-fi
-if [[ ! -S /var/run/docker.sock ]]; then
-  fail "未挂载 /var/run/docker.sock"
-fi
-if [[ ! -f "$DIR/docker-compose.yml" ]]; then
-  fail "缺少 docker-compose.yml"
-fi
+export DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"
+export GIT_TERMINAL_PROMPT=0
 
-DOCKER_BIN=""
-for candidate in /usr/local/bin/docker /usr/bin/docker docker; do
-  if [[ -x "$candidate" ]] || command -v "$candidate" >/dev/null 2>&1; then
-    DOCKER_BIN="$(command -v "$candidate" 2>/dev/null || echo "$candidate")"
-    break
-  fi
-done
-COMPOSE_BIN=""
-if [[ -x /usr/local/bin/docker-compose ]]; then
-  COMPOSE_BIN="/usr/local/bin/docker-compose"
-elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE_BIN="$(command -v docker-compose)"
-fi
-if [[ -z "$DOCKER_BIN" ]]; then
-  fail "未找到 docker 命令（请重建镜像以安装 docker CLI）"
-fi
-if [[ -z "$COMPOSE_BIN" ]]; then
-  fail "未找到 docker-compose"
+if ! command -v git >/dev/null 2>&1; then
+  progress 5 "安装 git…"
+  apk add --no-cache git >/dev/null 2>&1 || fail "无法安装 git"
 fi
 
 cd "$DIR" || fail "无法进入 $DIR"
 
-if [[ -f data/card_system.db ]]; then
-  cp -f data/card_system.db "data/backups/pre-update-$(date +%Y%m%d-%H%M).db" || true
+if [ -f data/card_system.db ]; then
+  cp -f data/card_system.db "data/backups/pre-update-$(date +%Y%m%d-%H%M).db" 2>/dev/null || true
   progress 8 "数据库已备份"
 fi
 
-progress 12 "正在从 GitHub 拉取代码"
+rm -f .git/index.lock .git/shallow.lock 2>/dev/null || true
 git config --global --add safe.directory "$DIR" 2>/dev/null || true
+
+progress 12 "正在同步 GitHub 代码"
+log "[git] fetch origin main"
 if ! git fetch origin main >>"$LOG" 2>&1; then
-  fail "git fetch 失败（请检查服务器能否访问 GitHub）"
+  fail "git fetch 失败，请查看日志"
 fi
-if ! git reset --hard FETCH_HEAD >>"$LOG" 2>&1; then
+if ! git reset --hard origin/main >>"$LOG" 2>&1; then
   fail "git reset 失败"
 fi
 VER="$(head -1 VERSION 2>/dev/null || echo ?)"
 progress 45 "代码已同步到 v${VER}"
-log_line "[ok] code $VER"
+log "[ok] synced $VER"
 
-export DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"
+progress 50 "停止旧容器"
+/usr/local/bin/docker-compose -f docker-compose.yml -p "$COMPOSE_PROJECT" down --remove-orphans >>"$LOG" 2>&1 || true
+/usr/local/bin/docker rm -f "$MAIN_CONTAINER" >>"$LOG" 2>&1 || true
 
-"$DOCKER_BIN" rm -f "$JOB_NAME" "$MAIN_CONTAINER" >>"$LOG" 2>&1 || true
-progress 50 "已移除旧容器，准备重建"
-progress 52 "正在提交容器重建（主服务会短暂断开，请稍候）"
-log_line "[ok] docker=$DOCKER_BIN compose=$COMPOSE_BIN"
-
-# 用 alpine + 挂载 docker/compose 二进制，避免拉取 docker:26-cli 失败
-if ! "$DOCKER_BIN" run -d --name "$JOB_NAME" \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$DIR:/work" \
-  -v "$DOCKER_BIN:/usr/local/bin/docker:ro" \
-  -v "$COMPOSE_BIN:/usr/local/bin/docker-compose:ro" \
-  -w /work \
-  -e DOCKER_HOST=unix:///var/run/docker.sock \
-  -e COMPOSE_PROJECT_NAME=codex \
-  alpine:3.20 \
-  sh -c '
-    set -u
-    LOG=/work/data/update-latest.log
-    echo "[progress] 55|清理旧容器" >> "$LOG"
-    /usr/local/bin/docker rm -f codex-update-job codex-credential-manager 2>>"$LOG" || true
-    /usr/local/bin/docker-compose -f /work/docker-compose.yml -p codex down --remove-orphans 2>>"$LOG" || true
-    echo "[progress] 60|Docker 正在 build / 启动" >> "$LOG"
-    if /usr/local/bin/docker-compose -f /work/docker-compose.yml -p codex up -d --build --force-recreate --remove-orphans >>"$LOG" 2>&1; then
-      echo "[progress] 95|容器已启动" >> "$LOG"
-      echo "[done] ok" >> "$LOG"
-      exit 0
-    fi
-    echo "[error] docker compose up 失败" >> "$LOG"
-    exit 1
-  ' >>"$LOG" 2>&1; then
-  fail "无法启动重建任务（请确认能拉取 alpine:3.20 或 SSH 手动 docker compose up）"
+progress 60 "正在 build 并启动（请耐心等待）"
+if ! /usr/local/bin/docker-compose -f docker-compose.yml -p "$COMPOSE_PROJECT" up -d --build --force-recreate --remove-orphans >>"$LOG" 2>&1; then
+  fail "docker compose up 失败"
 fi
 
-progress 58 "重建任务已提交，等待新容器就绪…"
-log_line "[ok] job $JOB_NAME started"
-
-deadline=$((SECONDS + 540))
-while (( SECONDS < deadline )); do
-  if ! "$DOCKER_BIN" ps -q -f "name=^${JOB_NAME}$" 2>/dev/null | grep -q .; then
-    if grep -q '\[done\]' "$LOG" 2>/dev/null; then
-      progress 100 "更新完成"
-      log_line "[done] finished"
-      exit 0
-    fi
-    if grep -q '\[error\]' "$LOG" 2>/dev/null; then
-      fail "重建失败（见日志）"
-    fi
-    sleep 2
-    continue
+progress 92 "等待服务就绪"
+ok=0
+i=0
+while [ "$i" -lt 60 ]; do
+  if wget -qO- http://127.0.0.1:8766/api/admin/health 2>/dev/null | grep -q '"ok"'; then
+    ok=1
+    break
   fi
-  sleep 3
+  i=$((i + 1))
+  sleep 2
 done
 
-fail "等待重建超时（9 分钟），请 SSH 查看 data/update-latest.log"
+if [ "$ok" -ne 1 ]; then
+  fail "健康检查超时，请执行: docker compose -p $COMPOSE_PROJECT ps"
+fi
+
+progress 100 "更新完成"
+log "[done] ok"
+exit 0

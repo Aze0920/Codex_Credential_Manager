@@ -80,17 +80,30 @@ docker logs -f codex-credential-manager
 
 ---
 
-## Docker 日常更新（一条命令）
+## Docker 日常更新
+
+**推荐：管理后台 → 版本与更新 → 一键更新**
+
+Web 容器**不会**自己跑完整更新（`compose up` 会删掉 Web 容器）。流程是：
+
+1. Web API 用 `docker.sock` 拉起一次性容器 **`codex-update-job`**（Alpine）
+2. 任务容器在宿主机目录 `/host-codex`（即 `/www/wwwroot/Codex`）里执行 `scripts/update-docker.sh`：`git fetch` → `compose up --build`
+3. 进度写在 `data/update-latest.log`；重建期间页面可能短暂 502，等进度到 100% 即可
+
+**SSH 手动更新**（与一键更新同一脚本，需在能访问 docker.sock 的环境执行）：
 
 ```bash
-bash /www/wwwroot/Codex/scripts/update-docker.sh
+cd /www/wwwroot/Codex
+docker run --rm --network host \
+  -v "$(pwd):/work" -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /usr/local/bin/docker-compose:/usr/local/bin/docker-compose:ro \
+  -e HOST_INSTALL_DIR=/work -e COMPOSE_PROJECT_NAME=codex \
+  alpine:3.20 sh /work/scripts/update-docker.sh
 ```
 
-或手动：`git fetch` + `git reset --hard FETCH_HEAD` + `docker compose up -d --build`
+或：`git fetch origin main && git reset --hard origin/main` + `docker compose -p codex up -d --build --force-recreate`
 
 数据在 `./data` 挂载卷，**不会丢库**。
-
-> **后台「一键更新」按钮**：是给 **systemd 裸机**用的；Docker 请在服务器 SSH 跑 `update-docker.sh`（容器里没有 git/docker 命令）。
 
 ---
 
