@@ -19,8 +19,8 @@ COPY config ./config
 COPY core ./core
 COPY sentinel ./sentinel
 COPY tools ./tools
-COPY scripts/update-docker.sh ./scripts/
-RUN chmod +x /app/scripts/update-docker.sh
+COPY scripts/update-docker.sh scripts/docker-entrypoint.sh ./scripts/
+RUN chmod +x /app/scripts/update-docker.sh /app/scripts/docker-entrypoint.sh
 COPY run.sh ./
 
 RUN mkdir -p /app/data
@@ -35,4 +35,4 @@ EXPOSE 8766
 HEALTHCHECK --interval=30s --timeout=8s --start-period=20s --retries=3 \
     CMD curl -f "http://127.0.0.1:${PORT}/api/admin/health" || exit 1
 
-CMD ["sh", "-c", "python tools/session_converter_web.py --host ${HOST} --port ${PORT}"]
+CMD ["/app/scripts/docker-entrypoint.sh"]

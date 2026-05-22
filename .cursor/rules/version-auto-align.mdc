@@ -1,0 +1,21 @@
+---
+description: 版本号必须与宿主机/GitHub/界面自动对齐，禁止再让用户手动对版本
+alwaysApply: true
+---
+
+# 版本自动对齐（强制）
+
+部署与更新相关改动必须保证 **宿主机 VERSION = 容器显示 = GitHub main/VERSION**，用户不应再手动 `force-recreate` 或解释版本不一致。
+
+## 必须遵守
+
+1. **读取**：`get_app_version()` / API 使用 `align_runtime_version()`，优先 `/host-codex/VERSION`（宿主机 git 目录）。
+2. **启动**：`scripts/docker-entrypoint.sh` 在容器启动时把 `/host-codex/VERSION` 同步到 `/app/VERSION`。
+3. **一键更新**：`update-docker.sh` 中 `docker compose up` 必须带 `--build --force-recreate`；`git reset` 必须用 `FETCH_HEAD`。
+4. **挂载**：`docker-compose.yml` 保持 `./VERSION`、`./core`、`./tools`、`.:/host-codex` 挂载。
+5. **改功能**：仍须递增 `VERSION` + `CHANGELOG`（见 bump-version 规则）。
+
+## 禁止
+
+- 只 `docker compose up -d` 而不重建、不同步 VERSION 就结束任务。
+- 让「当前版本」长期读镜像内旧 VERSION 而不读宿主机。

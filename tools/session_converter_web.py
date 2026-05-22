@@ -89,7 +89,7 @@ from core.api_gateway import (
     verify_api_gateway_key,
 )
 from core.activity_logger import clear_all_activity_logs, log_activity, log_exception, list_activity_logs
-from core.app_version import build_version_payload, get_app_version, get_host_install_dir
+from core.app_version import align_runtime_version, build_version_payload, get_app_version, get_host_install_dir
 from core.update_job import get_update_status, start_update_job
 from core.db_config import create_database_backup, get_database_path, list_database_backups
 from core.proxy_tester import test_proxy_pool
@@ -116,7 +116,7 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")  # 启动默认值
 ADMIN_TOKEN_TTL_SECONDS = 12 * 60 * 60
 ADMIN_TOKENS: dict[str, float] = {}
 ADMIN_BUILD_ID = int(Path(__file__).stat().st_mtime)
-APP_VERSION = get_app_version()
+APP_VERSION = align_runtime_version()
 SERVER_FEATURES = ("delete", "import-login", "sse-text-v2", "sqlite-settings", "account-groups", "import-stream", "import-background", "api-gateway")
 ACCOUNT_STATUSES = {
     "idle": "待处理",
@@ -2488,7 +2488,7 @@ def admin_health():
         {
             "ok": True,
             "buildId": ADMIN_BUILD_ID,
-            "version": APP_VERSION,
+            "version": align_runtime_version(),
             "features": list(SERVER_FEATURES),
             "dbPath": str(get_database_path()),
         }
@@ -2525,7 +2525,7 @@ def admin_dashboard():
     denied = admin_required()
     if denied:
         return denied
-    return jsonify({"stats": get_stats(), "buildId": ADMIN_BUILD_ID, "version": APP_VERSION})
+    return jsonify({"stats": get_stats(), "buildId": ADMIN_BUILD_ID, "version": align_runtime_version()})
 
 
 @app.get("/api/admin/version")

@@ -1,3 +1,5 @@
+name: codex
+
 services:
   codex-web:
     build: .
@@ -17,9 +19,10 @@ services:
       GITHUB_REPO: Aze0920/Codex_Credential_Manager
     volumes:
       - ./data:/app/data
-      - ./VERSION:/app/VERSION:ro
+      - ./VERSION:/app/VERSION
       - ./core:/app/core:ro
       - ./tools:/app/tools:ro
+      - ./scripts:/app/scripts:ro
       - .:/host-codex
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:

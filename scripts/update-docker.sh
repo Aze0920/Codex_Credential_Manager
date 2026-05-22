@@ -58,7 +58,9 @@ if [[ -z "$COMPOSE_BIN" ]]; then
   fail "未找到 docker-compose（请重建镜像）"
 fi
 
-docker rm -f "$JOB_NAME" >>"$LOG" 2>&1 || true
+MAIN_CONTAINER="codex-credential-manager"
+docker rm -f "$JOB_NAME" "$MAIN_CONTAINER" >>"$LOG" 2>&1 || true
+progress 50 "已移除旧容器，准备重建"
 progress 52 "正在提交容器重建（主服务会短暂断开，请稍候）"
 echo "[ok] compose bin=$COMPOSE_BIN" >>"$LOG"
 
@@ -68,16 +70,23 @@ if ! docker run -d --name "$JOB_NAME" \
   -v "$COMPOSE_BIN:/usr/local/bin/docker-compose:ro" \
   -w /work \
   -e DOCKER_HOST=unix:///var/run/docker.sock \
+  -e COMPOSE_PROJECT_NAME=codex \
   docker:26-cli \
   sh -c '
     set -u
-    echo "[progress] 60|Docker 正在 build / 启动" >> /work/data/update-latest.log
-    if /usr/local/bin/docker-compose -f /work/docker-compose.yml up -d --build >> /work/data/update-latest.log 2>&1; then
-      echo "[progress] 95|容器已启动" >> /work/data/update-latest.log
-      echo "[done] ok" >> /work/data/update-latest.log
+    MAIN=codex-credential-manager
+    JOB=codex-update-job
+    LOG=/work/data/update-latest.log
+    echo "[progress] 55|清理旧容器" >> "$LOG"
+    docker rm -f "$JOB" "$MAIN" 2>>"$LOG" || true
+    /usr/local/bin/docker-compose -f /work/docker-compose.yml down --remove-orphans 2>>"$LOG" || true
+    echo "[progress] 60|Docker 正在 build / 启动" >> "$LOG"
+    if /usr/local/bin/docker-compose -f /work/docker-compose.yml up -d --build --force-recreate --remove-orphans >>"$LOG" 2>&1; then
+      echo "[progress] 95|容器已启动" >> "$LOG"
+      echo "[done] ok" >> "$LOG"
       exit 0
     fi
-    echo "[error] docker compose up 失败" >> /work/data/update-latest.log
+    echo "[error] docker compose up 失败（若提示容器名冲突，请 SSH 执行: docker rm -f codex-credential-manager）" >> "$LOG"
     exit 1
   ' >>"$LOG" 2>&1; then
   fail "无法启动重建任务容器（可能无法拉取 docker:26-cli 镜像）"

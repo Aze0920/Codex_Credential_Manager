@@ -2,6 +2,19 @@
 
 [中文 README](README.md) · [English README](README.en.md)
 
+## [1.0.23] - 2026-05-22
+
+### 修复
+
+- 一键更新：重建前强制 `docker rm -f codex-credential-manager` + `compose down`，固定项目名 `codex`，避免容器名冲突。
+- 更新脚本优先使用宿主机 `/host-codex/scripts/update-docker.sh`；挂载 `./scripts` 到容器。
+
+## [1.0.22] - 2026-05-22
+
+### 修复
+
+- **版本自动对齐**：容器启动时同步宿主机 VERSION；API 每次读版本前对齐；一键更新强制 `--force-recreate`。宿主机 / 界面 / GitHub 保持一致，无需再手动对版本。
+
 ## [1.0.21] - 2026-05-22
 
 ### 修复

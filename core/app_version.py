@@ -43,6 +43,23 @@ def get_app_version() -> str:
     return "0.0.0"
 
 
+def align_runtime_version() -> str:
+    """启动/更新后自动对齐：宿主机 VERSION → /app/VERSION，返回当前生效版本。"""
+    host_file = Path(get_host_install_dir()) / "VERSION"
+    if host_file.is_file():
+        host_line = host_file.read_text(encoding="utf-8").strip().splitlines()[0].strip()
+        if host_line and VERSION_FILE.parent.is_dir():
+            try:
+                app_line = ""
+                if VERSION_FILE.is_file():
+                    app_line = VERSION_FILE.read_text(encoding="utf-8").strip().splitlines()[0].strip()
+                if app_line != host_line:
+                    VERSION_FILE.write_text(host_line + "\n", encoding="utf-8")
+            except OSError:
+                pass
+    return get_app_version()
+
+
 def compare_versions(current: str, remote: str) -> int:
     """Return -1 if current < remote, 0 if equal, 1 if current > remote."""
     a = _parse_version(current)
@@ -66,8 +83,8 @@ def get_update_script_path() -> str:
     if override:
         return override
     for candidate in (
-        PROJECT_ROOT / "scripts" / "update-docker.sh",
         Path("/host-codex/scripts/update-docker.sh"),
+        PROJECT_ROOT / "scripts" / "update-docker.sh",
         PROJECT_ROOT / "scripts" / "update-server.sh",
     ):
         if candidate.is_file():
@@ -227,7 +244,7 @@ def fetch_remote_release() -> dict[str, Any]:
 
 
 def build_version_payload(*, include_remote: bool = True) -> dict[str, Any]:
-    current = get_app_version()
+    current = align_runtime_version()
     payload: dict[str, Any] = {
         "version": current,
         "githubRepo": get_github_repo(),

@@ -1159,6 +1159,7 @@ ADMIN_HTML = r"""
             <h4>版本与更新</h4>
             <p class="about-version-line">当前版本：<strong id="about-app-version">加载中…</strong>　右上角「v」按钮可检查 GitHub 更新并一键拉取部署。</p>
             <ul class="about-changelog" id="about-changelog">
+              <li><span class="ver">v1.0.22</span> — 版本自动对齐：宿主机 / 界面 / GitHub 一致，启动与一键更新自动同步。</li>
               <li><span class="ver">v1.0.19</span> — 一键更新：进度条 + 详细日志；独立容器重建，修复误报「操作失败」。</li>
               <li><span class="ver">v1.0.18</span> — 修复版本检测：只读 GitHub main/VERSION，避免 CDN/旧 Release 误报已是最新。</li>
               <li><span class="ver">v1.0.17</span> — 关于页增加「版本与更新」说明；版本弹窗界面精简。</li>
