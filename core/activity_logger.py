@@ -7,7 +7,7 @@ import secrets
 import sqlite3
 import threading
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -81,7 +81,7 @@ def _normalize_page_size(value: Any) -> int:
 
 
 def _now_iso() -> str:
-    return datetime.now().isoformat(timespec="milliseconds")
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 def _new_log_id() -> str:

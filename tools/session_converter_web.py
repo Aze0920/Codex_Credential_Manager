@@ -240,7 +240,7 @@ def upsert_redeemed_row(client_id: str, account: dict[str, Any]) -> AccountRow:
 
 
 def now_iso() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def normalize_output_format(value: str | None) -> str:

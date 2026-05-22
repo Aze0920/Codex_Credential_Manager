@@ -11,7 +11,7 @@ import string
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -122,7 +122,7 @@ def generate_card_code(conn: sqlite3.Connection, pool_type: str) -> str:
 
 
 def now_iso() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _connect() -> sqlite3.Connection:

@@ -1915,13 +1915,29 @@ ADMIN_HTML = r"""
       $("logs-next").disabled = (data.page || 1) >= (data.totalPages || 1);
     }
 
-    function formatDisplayTime(value, emptyLabel = "未查询") {
-      if (!value) return emptyLabel;
-      const text = String(value).trim();
-      if (/^\d{4}-\d{2}-\d{2}T/.test(text)) {
-        return text.replace("T", " ").replace(/(\.\d+)?(Z|[+-]\d{2}:\d{2})?$/, "");
+    function parseDisplayDate(value) {
+      const text = String(value || "").trim();
+      if (!text) return null;
+      let iso = text;
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(iso)) {
+        iso = iso.replace(" ", "T");
       }
-      return text;
+      // Docker/服务器历史数据多为 UTC 但无时区后缀
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(iso) && !/[zZ]|[+-]\d{2}:\d{2}$/.test(iso)) {
+        iso += "Z";
+      }
+      const date = new Date(iso);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function formatDisplayTime(value, emptyLabel = "未查询") {
+      const date = parseDisplayDate(value);
+      if (!date) {
+        const text = String(value || "").trim();
+        return text || emptyLabel;
+      }
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
     }
 
     function escapeAttr(text) {
@@ -2254,7 +2270,7 @@ ADMIN_HTML = r"""
           <td class="mono">${row.code}</td>
           <td><span class="pill ${row.status}">${row.status === "available" ? "可用" : "已用"}</span></td>
           <td>${row.accountEmail || "-"}</td>
-          <td>${row.createdAt || "-"}</td>
+          <td>${formatDisplayTime(row.createdAt, "-")}</td>
           <td><button class="button small danger" data-delete-card="${row.code}">删除</button></td>
         </tr>
       `).join("") : `<tr><td colspan="6">暂无卡密</td></tr>`;
